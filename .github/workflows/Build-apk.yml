@@ -43,7 +43,6 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # keystore path
       - name: Decode Keystore
         if: ${{ env.BUILD_TYPE == 'release' }}
         run: |
@@ -75,11 +74,11 @@ jobs:
           fi
 
           if [ ! -f "$APK_PATH" ]; then
-            echo "❌ APK build failed."
+            echo "APK build failed."
             exit 1
           fi
 
-          echo "✅ APK built successfully."
+          echo "APK built successfully."
           APK_SIZE=$(du -h "$APK_PATH" | cut -f1)
           echo "APK_SIZE=$APK_SIZE" >> $GITHUB_ENV
           echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
@@ -94,7 +93,7 @@ jobs:
       - name: Commit APK to repository
         if: ${{ env.COMMIT_TO_REPO == 'true' }}
         run: |
-          TARGET_DIR="server/app/factory/baseApp"
+          TARGET_DIR="backend/app/factory/baseApp"
           TARGET_PATH="$TARGET_DIR/Fason.apk"
 
           git config user.name "github-actions[bot]"
@@ -109,5 +108,4 @@ jobs:
             git add "$TARGET_PATH"
             git commit -m "chore: update Fason.apk (${{ env.BUILD_TYPE }}) [skip ci]"
             git push origin HEAD:${{ github.ref }}
-            echo "✅ APK committed successfully."
           fi

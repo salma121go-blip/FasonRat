@@ -5,7 +5,6 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
-import android.net.NetworkInfo;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Environment;
@@ -20,18 +19,15 @@ import org.json.JSONObject;
 
 import java.io.File;
 
-// Device info collector
 public final class InfoManager {
 
     private InfoManager() {}
 
-    // Get device info
     public static JSONObject get() {
         JSONObject result = new JSONObject();
         try {
             Context ctx = FasonApp.getContext();
 
-            // Basic info
             result.put("brand", Build.BRAND);
             result.put("model", Build.MODEL);
             result.put("device", Build.DEVICE);
@@ -40,14 +36,12 @@ public final class InfoManager {
             result.put("board", Build.BOARD);
             result.put("hardware", Build.HARDWARE);
 
-            // Android version
             result.put("androidVersion", Build.VERSION.RELEASE);
             result.put("sdkLevel", Build.VERSION.SDK_INT);
             result.put("securityPatch", Build.VERSION.SECURITY_PATCH);
             result.put("buildId", Build.ID);
             result.put("buildFingerprint", Build.FINGERPRINT);
 
-            // Battery, storage, memory, network, screen, phone
             result.put("battery", getBattery(ctx));
             result.put("storage", getStorage());
             result.put("memory", getMemory(ctx));
@@ -62,7 +56,6 @@ public final class InfoManager {
         return result;
     }
 
-    // Battery info
     private static JSONObject getBattery(Context ctx) {
         JSONObject bat = new JSONObject();
         try {
@@ -89,7 +82,6 @@ public final class InfoManager {
         }
     }
 
-    // Storage info
     private static JSONObject getStorage() {
         JSONObject st = new JSONObject();
         try {
@@ -103,7 +95,6 @@ public final class InfoManager {
             st.put("internalUsed", formatSize(total - free));
             st.put("internalUsedPercent", (int) ((total - free) * 100 / total));
 
-            // External SD
             if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
                 File ext = Environment.getExternalStorageDirectory();
                 StatFs extStat = new StatFs(ext.getPath());
@@ -123,7 +114,6 @@ public final class InfoManager {
         return st;
     }
 
-    // Memory info
     private static JSONObject getMemory(Context ctx) {
         JSONObject mem = new JSONObject();
         try {
@@ -146,35 +136,21 @@ public final class InfoManager {
         return mem;
     }
 
-    // Network info
     private static JSONObject getNetwork(Context ctx) {
         JSONObject net = new JSONObject();
         try {
             ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Network active = cm.getActiveNetwork();
-                NetworkCapabilities caps = cm.getNetworkCapabilities(active);
-                boolean connected = active != null && caps != null;
-                net.put("connected", connected);
+            Network active = cm.getActiveNetwork();
+            NetworkCapabilities caps = cm.getNetworkCapabilities(active);
+            boolean connected = active != null && caps != null;
+            net.put("connected", connected);
 
-                if (connected) {
-                    if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) net.put("type", "WiFi");
-                    else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) net.put("type", "Mobile");
-                    else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) net.put("type", "Ethernet");
-                    else net.put("type", "Other");
-                }
-            } else {
-                NetworkInfo active = cm.getActiveNetworkInfo();
-                boolean connected = active != null && active.isConnectedOrConnecting();
-                net.put("connected", connected);
-
-                if (connected) {
-                    int type = active.getType();
-                    net.put("type", type == ConnectivityManager.TYPE_WIFI ? "WiFi" : type == ConnectivityManager.TYPE_MOBILE ? "Mobile" : "Other");
-                    net.put("typeName", active.getTypeName());
-                    net.put("subtypeName", active.getSubtypeName());
-                }
+            if (connected) {
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) net.put("type", "WiFi");
+                else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) net.put("type", "Mobile");
+                else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) net.put("type", "Ethernet");
+                else net.put("type", "Other");
             }
         } catch (Exception e) {
             try { net.put("error", "Unavailable"); } catch (Exception ignored) {}
@@ -182,7 +158,6 @@ public final class InfoManager {
         return net;
     }
 
-    // Screen info
     private static JSONObject getScreen(Context ctx) {
         JSONObject scr = new JSONObject();
         try {
@@ -210,7 +185,6 @@ public final class InfoManager {
         return scr;
     }
 
-    // Phone info
     private static JSONObject getPhone(Context ctx) {
         JSONObject phone = new JSONObject();
         try {
@@ -258,14 +232,10 @@ public final class InfoManager {
         }
     }
 
-    // Format bytes
     private static String formatSize(long bytes) {
         if (bytes < 1024) return bytes + " B";
         int exp = (int) (Math.log(bytes) / Math.log(1024));
         char unit = "KMGTPE".charAt(exp - 1);
         return String.format("%.1f %sB", bytes / Math.pow(1024, exp), unit);
     }
-
-    // Legacy method
-    public static JSONObject getDeviceInfo() { return get(); }
 }

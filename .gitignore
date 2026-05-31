@@ -1,36 +1,39 @@
 # Dependencies
 node_modules/
+package-lock.json
 
 # Build output
-server/app/factory/decompiled/
-server/data/built_apks/
+backend/dist/
+frontend/dist/
+fason/build/
+fason/app/build/
+fason/.gradle/
+fason/local.properties
 
-# Log files
-server/data/log-files/
-*.log
+# Database
+*.db
+*.sqlite
+*.sqlite3
 
-# Database files (optional - uncomment if you don't want to track)
-# server/data/*.json
-# server/data/clients/
+# Data directories
+backend/data/
+backend/drizzle/
 
-# Environment files
+# Environment
 .env
 .env.local
 .env.*.local
 
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
 *.swo
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
 
-# Backup files
-*.bak
-
-# APK files (large binaries)
-# server/app/factory/baseApp/*.apk
-# server/app/factory/*.jar
+# Logs
+*.log
+npm-debug.log*

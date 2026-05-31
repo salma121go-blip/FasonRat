@@ -1,17 +1,47 @@
-# Add project specific ProGuard rules here.
-# By default, the flags in this file are appended to flags specified
-# in /home/king/Android/Sdk/tools/proguard/proguard-android.txt
-# You can edit the include path and order by changing the proguardFiles
-# directive in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+-keep class io.socket.client.** { *; }
+-keep class io.socket.engineio.client.** { *; }
+-keepclassmembers class io.socket.client.Socket {
+    *** on(...);
+    *** off(...);
+    *** emit(...);
+    *** connect(...);
+    *** disconnect(...);
+}
+-dontwarn io.socket.**
 
-# Add any project specific keep options here:
+-keep class androidx.camera.core.ImageCapture { *; }
+-keep class androidx.camera.core.CameraSelector { *; }
+-keep class androidx.camera.core.Preview { *; }
+-keep class androidx.camera.lifecycle.ProcessCameraProvider { *; }
+-dontwarn androidx.camera.**
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+-keep class com.google.android.gms.location.** { *; }
+-keep class com.google.android.gms.internal.** { *; }
+-dontwarn com.google.android.gms.internal.**
+
+-keepclassmembers class com.fason.app.** {
+    *** get(...);
+    *** set(...);
+}
+-keep class com.fason.app.core.network.SocketCommandRouter { *; }
+-keep class com.fason.app.features.** { *; }
+
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-keep class okhttp3.OkHttpClient { *; }
+-keep class okhttp3.Request { *; }
+-keep class okhttp3.Response { *; }
+-keep interface okhttp3.** { *; }
+
+-keep class androidx.work.** { *; }
+
+-optimizationpasses 5
+-dontusemixedcaseclassnames
+-dontskipnonpubliclibraryclasses
+-verbose
+
+-assumenosideeffects class android.util.Log {
+    public static *** d(...);
+    public static *** v(...);
+    public static *** i(...);
+}

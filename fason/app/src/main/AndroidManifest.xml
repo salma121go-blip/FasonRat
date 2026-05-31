@@ -9,10 +9,8 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
-    <!-- Legacy external storage permissions for Android 10 and below -->
+    <!-- Storage access for Android 10-12 (Android 13+ uses READ_MEDIA_* below) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" 
-        android:maxSdkVersion="28" />
 
     <!-- Full file access (special permission) for Android 11+ -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
@@ -42,14 +40,14 @@
     <!-- Boot and background -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" /> -->
 
     <!-- Phone and call logs -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
@@ -57,7 +55,7 @@
 
     <!-- Audio & mic -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /> -->
 
     <!-- Location -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -68,16 +66,14 @@
 
     <application
         android:name=".core.FasonApp"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:hardwareAccelerated="true"
         android:largeHeap="true"
         android:usesCleartextTraffic="true"
-        android:requestLegacyExternalStorage="true"
-        android:preserveLegacyExternalStorage="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+        android:theme="@style/AppTheme">
 
         <activity
             android:name=".ui.MainActivity"
@@ -101,7 +97,11 @@
             android:name=".service.MainService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync|location|camera|microphone" />
+            android:foregroundServiceType="specialUse|location|camera|microphone">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent socket connection for remote device management" />
+        </service>
 
         <receiver
             android:name=".receiver.BootReceiver"
@@ -112,7 +112,6 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                <action android:name="respawnService" />
             </intent-filter>
         </receiver>
 
@@ -122,18 +121,22 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="keepAlive" />
-                <action android:name="android.intent.action.TIME_TICK" />
+                <action android:name="respawnService" />
             </intent-filter>
         </receiver>
 
         <service
-            android:name=".notifications.NotificationRelayService"
+            android:name=".features.notification.NotificationRelayService"
             android:label="@string/app_name"
+            android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Relay device notifications to remote management server" />
         </service>
 
     </application>

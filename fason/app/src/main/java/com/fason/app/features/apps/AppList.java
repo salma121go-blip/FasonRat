@@ -3,9 +3,9 @@ package com.fason.app.features.apps;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.os.Build;
 
 import com.fason.app.core.FasonApp;
+import com.fason.app.core.Protocol;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -13,18 +13,16 @@ import org.json.JSONObject;
 import java.io.File;
 import java.util.List;
 
-// Installed apps manager
 public final class AppList {
 
     private AppList() {}
 
-    // Get installed apps list
     public static JSONObject get(boolean includeSystem) {
         JSONObject result = new JSONObject();
         JSONArray apps = new JSONArray();
 
         try {
-            result.put("apps", apps);
+            result.put(Protocol.KEY_APPS, apps);
 
             PackageManager pm = FasonApp.getContext().getPackageManager();
             List<PackageInfo> packages = pm.getInstalledPackages(PackageManager.GET_META_DATA);
@@ -37,26 +35,18 @@ public final class AppList {
                     if (!includeSystem && isSystem) continue;
 
                     JSONObject app = new JSONObject();
-                    app.put("appName", info.loadLabel(pm).toString());
-                    app.put("packageName", pkg.packageName);
-                    app.put("versionName", pkg.versionName != null ? pkg.versionName : "");
+                    app.put(Protocol.KEY_APP_NAME, info.loadLabel(pm).toString());
+                    app.put(Protocol.KEY_PACKAGE_NAME, pkg.packageName);
+                    app.put(Protocol.KEY_VERSION_NAME, pkg.versionName != null ? pkg.versionName : "");
+                    app.put(Protocol.KEY_VERSION_CODE, pkg.getLongVersionCode());
+                    app.put(Protocol.KEY_IS_SYSTEM, isSystem);
+                    app.put(Protocol.KEY_ENABLED, info.enabled);
+                    app.put(Protocol.KEY_TARGET_SDK, info.targetSdkVersion);
 
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        app.put("versionCode", pkg.getLongVersionCode());
-                    } else {
-                        app.put("versionCode", pkg.versionCode);
-                    }
-
-                    app.put("isSystem", isSystem);
-                    app.put("enabled", info.enabled);
-                    app.put("targetSdkVersion", info.targetSdkVersion);
-
-                    // Get app size
                     try {
                         String src = info.sourceDir;
                         if (src != null) {
-                            File f = new File(src);
-                            app.put("size", f.length());
+                            app.put(Protocol.KEY_SIZE, new File(src).length());
                         }
                     } catch (Exception ignored) {}
 
@@ -64,16 +54,11 @@ public final class AppList {
                 } catch (Exception ignored) {}
             }
 
-            result.put("total", apps.length());
+            result.put(Protocol.KEY_TOTAL, apps.length());
         } catch (Exception e) {
-            try { result.put("error", e.getMessage()); } catch (Exception ignored) {}
+            try { result.put(Protocol.KEY_ERROR, e.getMessage()); } catch (Exception ignored) {}
         }
 
         return result;
-    }
-
-    // Legacy method
-    public static JSONObject getInstalledApps(boolean includeSystem) {
-        return get(includeSystem);
     }
 }

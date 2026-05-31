@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nano-stealth notification layout: 1dp transparent ImageView.
+     RemoteViews only supports a limited set of views (FrameLayout,
+     LinearLayout, ImageView, TextView, etc.). Plain View crashes.
+     A 1x1dp transparent ImageView is RemoteViews-safe and avoids the
+     0dp inflation crash on Android 14+ while keeping the notification
+     body effectively invisible. -->
+<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="1dp"
+    android:layout_height="1dp"
+    android:src="@android:color/transparent"
+    android:scaleType="center" />

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Minimal 1dp white dot — barely visible as notification icon.
+     Android renders small icons as monochrome silhouettes,
+     so a tiny white circle on transparent background produces
+     the smallest possible status-bar dot. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="1dp"
+    android:height="1dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,12m0.5,0a0.5,0.5 0,1 0,1 0a0.5,0.5 0,1 0,-1 0"/>
+</vector>

