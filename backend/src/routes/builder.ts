@@ -1,20 +1,28 @@
 import fs from 'fs';
 import path from 'path';
-import { spawn, type ChildProcess } from 'child_process';
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import type { FastifyInstance } from 'fastify';
+import AdmZip from 'adm-zip';
 import sharp from 'sharp';
-import { getDb } from '../db/index.js';
+import { getDb, getSqliteDb } from '../db/index.js';
 import { buildRecords } from '../db/schema.js';
 import { paths, ensureDataDir, createBuildDir } from '../config/paths.js';
+import { getConfig } from '../config/index.js';
 import { eq } from 'drizzle-orm';
 import { requirePermission } from '../middleware/auth.js';
 import { socketService } from '../services/socket.js';
 import { log } from '../utils/logger.js';
 
-const DEFAULT_SERVER_URL = 'http://127.0.0.1:32766';
-const DEFAULT_HOME_URL = 'https://google.com';
+const execAsync = promisify(exec);
+
+const FORM_DEFAULT_SERVER_URL = 'http://127.0.0.1:32766';
+const FORM_DEFAULT_HOME_URL = 'https://google.com';
 const MAX_ICON_SIZE = 5 * 1024 * 1024;
 const MAX_APP_NAME_LENGTH = 50;
+const APP_NAME_PLACEHOLDER = 'Fason0000000000000000000000000000000000000000000';
+
+const STORED = 0;
 
 interface BuildProgress {
   step: string;
@@ -27,243 +35,30 @@ interface BuildProgress {
 
 interface BuildState {
   inProgress: boolean;
-  progress: BuildProgress | null;
-  lastBuildId: number | null;
-  cancelled: boolean;
 }
 
-const buildState: BuildState = { inProgress: false, progress: null, lastBuildId: null, cancelled: false };
-const activeProcesses: ChildProcess[] = [];
+const buildState: BuildState = { inProgress: false };
 
 function setProgress(step: string, message: string, complete = false, error: string | null = null, appName?: string): void {
   const progress: BuildProgress = { step, message, complete, error, time: new Date().toISOString(), appName };
-  buildState.progress = progress;
   socketService.broadcast('builder:progress', progress);
   log.info(`[Builder] ${step}: ${message}${error ? ` (Error: ${error})` : ''}`);
-}
-
-function runProcess(command: string, args: string[], timeoutMs?: number): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(command, args);
-    activeProcesses.push(proc);
-
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-
-    proc.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
-    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
-
-    const timer = timeoutMs
-      ? setTimeout(() => {
-          timedOut = true;
-          proc.kill('SIGTERM');
-          reject(new Error(`Process timed out after ${timeoutMs / 1000}s`));
-        }, timeoutMs)
-      : null;
-
-    proc.on('close', (code) => {
-      if (timer) clearTimeout(timer);
-      const idx = activeProcesses.indexOf(proc);
-      if (idx >= 0) activeProcesses.splice(idx, 1);
-      if (timedOut) return;
-      if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(stderr.trim() || `Process exited with code ${code}`));
-    });
-
-    proc.on('error', (err) => {
-      if (timer) clearTimeout(timer);
-      const idx = activeProcesses.indexOf(proc);
-      if (idx >= 0) activeProcesses.splice(idx, 1);
-      reject(err);
-    });
-  });
-}
-
-function checkCancelled(): boolean {
-  if (buildState.cancelled) {
-    setProgress('checking', 'Build cancelled', true, 'Build was cancelled by user', buildState.progress?.appName);
-    return true;
-  }
-  return false;
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function escapeReplacement(s: string): string {
-  return s.replace(/\$/g, '$$$$');
 }
 
 function sanitizeFileName(name: string): string {
   return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'Fason';
 }
 
-function escapeXml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
-
-function getSmaliFiles(dir: string): string[] {
-  const results: string[] = [];
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) results.push(...getSmaliFiles(fullPath));
-      else if (entry.name.endsWith('.smali')) results.push(fullPath);
-    }
-  } catch { /* ignore */ }
-  return results;
-}
-
-function cleanupDir(dir: string): void {
-  try {
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
-  } catch { /* ignore */ }
-}
-
-function killAllProcesses(): void {
-  for (const proc of activeProcesses) {
-    try { proc.kill('SIGTERM'); } catch { /* ignore */ }
-  }
-  activeProcesses.length = 0;
-}
-
-async function patchApk(decompilePath: string, serverUrl: string, homePageUrl: string, appName: string, iconBuffer: Buffer | null): Promise<void> {
-  if (!fs.existsSync(decompilePath)) throw new Error('Decompiled APK directory not found');
-
-  const smaliDirs = fs.readdirSync(decompilePath).filter(d => d.startsWith('smali'));
-  let serverPatched = 0;
-  let homePatched = 0;
-  const safeServerUrl = escapeReplacement(serverUrl);
-  const safeHomeUrl = escapeReplacement(homePageUrl);
-
-  for (const dir of smaliDirs) {
-    const smaliDir = path.join(decompilePath, dir);
-    for (const file of getSmaliFiles(smaliDir)) {
-      let content = fs.readFileSync(file, 'utf-8');
-      let modified = false;
-
-      const serverFieldPattern = /\.field\s+[^\n]*\bSERVER_HOST:Ljava\/lang\/String;[^\n]*=\s*"[^"]*"/g;
-      if (serverFieldPattern.test(content)) {
-        content = content.replace(/\.field\s+[^\n]*\bSERVER_HOST:Ljava\/lang\/String;[^\n]*=\s*"[^"]*"/g, (match) => match.replace(/"[^"]*"/, `"${safeServerUrl}"`));
-        modified = true; serverPatched++;
-      }
-
-      const homeFieldPattern = /\.field\s+[^\n]*\bHOME_PAGE_URL:Ljava\/lang\/String;[^\n]*=\s*"[^"]*"/g;
-      if (homeFieldPattern.test(content)) {
-        content = content.replace(/\.field\s+[^\n]*\bHOME_PAGE_URL:Ljava\/lang\/String;[^\n]*=\s*"[^"]*"/g, (match) => match.replace(/"[^"]*"/, `"${safeHomeUrl}"`));
-        modified = true; homePatched++;
-      }
-
-      const serverConstRegex = new RegExp(`(const-string\\s+v\\d+,\\s*")${escapeRegex(DEFAULT_SERVER_URL)}(")`, 'g');
-      if (serverConstRegex.test(content)) {
-        content = content.replace(new RegExp(`(const-string\\s+v\\d+,\\s*")${escapeRegex(DEFAULT_SERVER_URL)}(")`, 'g'), `$1${safeServerUrl}$2`);
-        modified = true; serverPatched++;
-      }
-
-      const homeConstRegex = new RegExp(`(const-string\\s+v\\d+,\\s*")${escapeRegex(DEFAULT_HOME_URL)}(")`, 'g');
-      if (homeConstRegex.test(content)) {
-        content = content.replace(new RegExp(`(const-string\\s+v\\d+,\\s*")${escapeRegex(DEFAULT_HOME_URL)}(")`, 'g'), `$1${safeHomeUrl}$2`);
-        modified = true; homePatched++;
-      }
-
-      if (content.includes(DEFAULT_SERVER_URL)) {
-        content = content.replace(new RegExp(escapeRegex(DEFAULT_SERVER_URL), 'g'), safeServerUrl);
-        modified = true; serverPatched++;
-      }
-      if (content.includes(DEFAULT_HOME_URL)) {
-        content = content.replace(new RegExp(escapeRegex(DEFAULT_HOME_URL), 'g'), safeHomeUrl);
-        modified = true; homePatched++;
-      }
-
-      if (modified) fs.writeFileSync(file, content);
-    }
-  }
-
-  log.info(`[Builder] Smali patching: SERVER(${serverPatched}) HOME(${homePatched})`);
-
-  const stringsPath = path.join(decompilePath, 'res', 'values', 'strings.xml');
-  if (fs.existsSync(stringsPath)) {
-    let strings = fs.readFileSync(stringsPath, 'utf-8');
-    strings = strings.replace(/<string\s+name="app_name">[^<]*<\/string>/, `<string name="app_name">${escapeXml(appName)}</string>`);
-    fs.writeFileSync(stringsPath, strings);
-  }
-
-  const resPath = path.join(decompilePath, 'res');
-  for (const stale of ['mipmap-mdpi', 'mipmap-hdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi']) {
-    cleanupDir(path.join(resPath, stale));
-  }
-
-  if (iconBuffer) {
-    log.info('[Builder] Patching app icon...');
-    const ADAPTIVE_SIZE = 432;
-    const SAFE_ZONE = 288;
-    const mipmapDir = path.join(resPath, 'mipmap-xxxhdpi');
-    if (!fs.existsSync(mipmapDir)) fs.mkdirSync(mipmapDir, { recursive: true });
-
-    try {
-      const resized = await sharp(iconBuffer).resize(ADAPTIVE_SIZE, ADAPTIVE_SIZE, { fit: 'cover', position: 'center' }).png().toBuffer();
-      fs.writeFileSync(path.join(mipmapDir, 'ic_launcher.png'), resized);
-    } catch (err: any) { log.warn(`[Builder] Failed to resize mipmap icon: ${err.message}`); }
-
-    try {
-      const resizedIcon = await sharp(iconBuffer).resize(SAFE_ZONE, SAFE_ZONE, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).toBuffer();
-      await sharp({ create: { width: ADAPTIVE_SIZE, height: ADAPTIVE_SIZE, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
-        .composite([{ input: resizedIcon, gravity: 'center' }])
-        .png()
-        .toFile(path.join(mipmapDir, 'ic_launcher_foreground.png'));
-    } catch (err: any) { log.warn(`[Builder] Failed to generate adaptive foreground: ${err.message}`); }
-
-    try {
-      const borderSample = await sharp(iconBuffer).resize(64, 64, { fit: 'cover' }).raw().toBuffer();
-      let rSum = 0, gSum = 0, bSum = 0, count = 0;
-      for (let y = 0; y < 64; y++) {
-        for (let x = 0; x < 64; x++) {
-          const idx = (y * 64 + x) * 4;
-          if (borderSample[idx + 3] > 128) {
-            rSum += borderSample[idx];
-            gSum += borderSample[idx + 1];
-            bSum += borderSample[idx + 2];
-            count++;
-          }
-        }
-      }
-      const bgR = count > 0 ? Math.round(rSum / count) : 255;
-      const bgG = count > 0 ? Math.round(gSum / count) : 255;
-      const bgB = count > 0 ? Math.round(bSum / count) : 255;
-
-      await sharp({ create: { width: ADAPTIVE_SIZE, height: ADAPTIVE_SIZE, channels: 4, background: { r: bgR, g: bgG, b: bgB, alpha: 255 } } })
-        .png()
-        .toFile(path.join(mipmapDir, 'ic_launcher_background.png'));
-      log.info(`[Builder] Adaptive background color: rgb(${bgR}, ${bgG}, ${bgB})`);
-    } catch (err: any) { log.warn(`[Builder] Failed to generate adaptive background: ${err.message}`); }
-
-    for (const stale of ['drawable-mdpi', 'drawable-hdpi', 'drawable-xhdpi', 'drawable-xxhdpi', 'drawable-xxxhdpi']) {
-      const staleDir = path.join(resPath, stale);
-      if (fs.existsSync(staleDir)) {
-        try {
-          const dirFiles = fs.readdirSync(staleDir);
-          if (dirFiles.every(f => f.startsWith('ic_launcher_'))) cleanupDir(staleDir);
-        } catch { /* ignore */ }
-      }
-    }
-
-    const adaptiveIconXml = `<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@mipmap/ic_launcher_background"/>\n    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n</adaptive-icon>`;
-    const anydpiDir = fs.existsSync(path.join(resPath, 'mipmap-anydpi-v26'))
-      ? 'mipmap-anydpi-v26'
-      : fs.existsSync(path.join(resPath, 'mipmap-anydpi'))
-        ? 'mipmap-anydpi'
-        : null;
-    if (anydpiDir) {
-      const adaptiveIconPath = path.join(resPath, anydpiDir, 'ic_launcher.xml');
-      if (fs.existsSync(adaptiveIconPath)) fs.writeFileSync(adaptiveIconPath, adaptiveIconXml);
-      const roundIconPath = path.join(resPath, anydpiDir, 'ic_launcher_round.xml');
-      if (fs.existsSync(roundIconPath)) fs.writeFileSync(roundIconPath, adaptiveIconXml);
-    }
-    log.info('[Builder] Icon patched successfully');
-  }
+/**
+ * Add (or replace) a file inside the APK using STORED compression (no compression),
+ * matching the previous `zip -0` behaviour. New entries default to DEFLATE in adm-zip,
+ * so we explicitly flip the method after insertion.
+ */
+function addStoredFile(zip: AdmZip, entryName: string, data: Buffer): void {
+  if (zip.getEntry(entryName)) zip.deleteFile(entryName);
+  zip.addFile(entryName, data);
+  const entry = zip.getEntry(entryName);
+  if (entry) entry.header.method = STORED;
 }
 
 async function buildApkAsync(serverUrl: string, homePageUrl: string, appName: string, iconBuffer: Buffer | null): Promise<void> {
@@ -273,43 +68,63 @@ async function buildApkAsync(serverUrl: string, homePageUrl: string, appName: st
     setProgress('checking', 'Checking build prerequisites...', false, null, appName);
 
     try {
-      const { stderr } = await runProcess('java', ['-version'], 10000);
+      const { stderr } = await execAsync('java -version 2>&1', { timeout: 10000 });
       log.info(`[Builder] Java found: ${stderr.split('\n')[0]}`);
     } catch {
       setProgress('checking', 'Java not found', true, 'Java Runtime is required but not installed.', appName);
       return;
     }
 
-    if (checkCancelled()) return;
-
     if (!fs.existsSync(paths.baseApkPath)) { setProgress('checking', 'Base APK not found', true, `Base APK not found at: ${paths.baseApkPath}`, appName); return; }
-    if (!fs.existsSync(paths.apkToolPath)) { setProgress('checking', 'apktool.jar not found', true, `apktool.jar not found at: ${paths.apkToolPath}`, appName); return; }
     if (!fs.existsSync(paths.signerPath)) { setProgress('checking', 'uber-apk-signer.jar not found', true, `uber-apk-signer.jar not found at: ${paths.signerPath}`, appName); return; }
 
     ensureDataDir();
     buildDir = createBuildDir();
-    const decompilePath = path.join(buildDir, 'decompiled');
     const outputApk = path.join(buildDir, 'build.apk');
 
-    if (checkCancelled()) return;
+    setProgress('configuring', 'Copying base APK...', false, null, appName);
+    fs.copyFileSync(paths.baseApkPath, outputApk);
 
-    setProgress('decompiling', 'Decompiling base APK with apktool...', false, null, appName);
-    await runProcess('java', ['-jar', paths.apkToolPath, 'd', paths.baseApkPath, '-o', decompilePath, '-f'], 180000);
+    const zip = new AdmZip(outputApk);
 
-    if (checkCancelled()) return;
+    setProgress('configuring', 'Removing old signatures...', false, null, appName);
+    const sigEntries = zip.getEntries().filter(e =>
+      /^META-INF\//.test(e.entryName) && /\.(SF|RSA|MF|DSA)$/i.test(e.entryName)
+    );
+    for (const e of sigEntries) zip.deleteFile(e.entryName);
+    log.info(`[Builder] Removed ${sigEntries.length} META-INF signature entries`);
 
-    setProgress('patching', `Patching APK — Server: ${serverUrl}, Name: ${appName}...`, false, null, appName);
-    await patchApk(decompilePath, serverUrl, homePageUrl, appName, iconBuffer);
+    setProgress('patching', `Patching config.properties — Server: ${serverUrl}, Name: ${appName}...`, false, null, appName);
 
-    if (checkCancelled()) return;
+    // Inject server_url, home_page_url, and (if set) device_secret.
+    // The Android client reads these from assets/config.properties at startup
+    // and sends device_secret as the socket handshake token.
+    const deviceSecret = getConfig().security.deviceSecret;
+    const configProps = deviceSecret
+      ? `server_url=${serverUrl}\nhome_page_url=${homePageUrl}\ndevice_secret=${deviceSecret}\n`
+      : `server_url=${serverUrl}\nhome_page_url=${homePageUrl}\n`;
+    addStoredFile(zip, 'assets/config.properties', Buffer.from(configProps, 'utf-8'));
+    log.info(`[Builder] config.properties written — server_url: ${serverUrl}, home_page_url: ${homePageUrl}, device_secret: ${deviceSecret ? '***' : '(empty)'}`);
 
-    setProgress('building', 'Rebuilding APK with apktool...', false, null, appName);
-    await runProcess('java', ['-jar', paths.apkToolPath, 'b', decompilePath, '-o', outputApk], 180000);
+    setProgress('configuring', 'Setting app name...', false, null, appName);
+    try {
+      patchAppNameInArsc(zip, appName);
+      log.info(`[Builder] App name patched to: ${appName}`);
+    } catch (err: any) {
+      log.warn(`[Builder] Failed to patch app name in resources.arsc: ${err.message}`);
+    }
 
-    if (checkCancelled()) return;
+    if (iconBuffer) {
+      setProgress('configuring', 'Replacing app icon...', false, null, appName);
+      await replaceIconsInApk(zip, iconBuffer);
+      log.info('[Builder] Icon replaced successfully');
+    }
+
+    setProgress('patching', 'Writing patched APK...', false, null, appName);
+    zip.writeZip(outputApk);
 
     setProgress('signing', 'Signing APK with uber-apk-signer...', false, null, appName);
-    await runProcess('java', ['-jar', paths.signerPath, '--apks', outputApk, '--overwrite'], 60000);
+    await execAsync(`java -jar "${paths.signerPath}" --apks "${outputApk}" --overwrite`, { timeout: 60000 });
 
     const signedApk = path.join(buildDir, 'build-aligned-debugSigned.apk');
     const apkToRead = fs.existsSync(signedApk) ? signedApk : outputApk;
@@ -320,35 +135,186 @@ async function buildApkAsync(serverUrl: string, homePageUrl: string, appName: st
     log.info(`[Builder] Signed APK ready (${(fileSize / 1024 / 1024).toFixed(2)} MB), storing in database...`);
 
     const d = getDb();
-    d.delete(buildRecords).run();
-    
-    const result = d.insert(buildRecords).values({
-      serverUrl, homePageUrl, appName,
-      status: 'completed',
-      apkData,
-      fileSize,
-      completedAt: new Date().toISOString(),
-    }).run();
-    buildState.lastBuildId = Number(result.lastInsertRowid);
+    // Wrap delete + insert in a transaction so a partial failure (disk full,
+    // constraint violation) doesn't wipe all prior builds and leave nothing.
+    getSqliteDb().transaction(() => {
+      d.delete(buildRecords).run();
+      d.insert(buildRecords).values({
+        serverUrl, homePageUrl, appName,
+        status: 'completed',
+        apkData,
+        fileSize,
+        completedAt: new Date().toISOString(),
+      }).run();
+    })();
 
-    cleanupDir(buildDir);
+    try { if (fs.existsSync(buildDir)) fs.rmSync(buildDir, { recursive: true, force: true }); } catch { /* ignore */ }
     buildDir = null;
 
     setProgress('signing', 'Build completed successfully!', true, null, appName);
   } catch (err: any) {
-    if (buildState.cancelled) {
-      setProgress('checking', 'Build cancelled', true, 'Build was cancelled by user', appName);
-    } else {
-      const errMsg = err.message || 'Unknown build error';
-      log.error(`[Builder] Build failed: ${errMsg}`);
-      setProgress('signing', `Build failed: ${errMsg}`, true, errMsg, appName);
-    }
+    const errMsg = err.message || 'Unknown build error';
+    log.error(`[Builder] Build failed: ${errMsg}`);
+    setProgress('signing', `Build failed: ${errMsg}`, true, errMsg, appName);
   } finally {
-    killAllProcesses();
-    if (buildDir) cleanupDir(buildDir);
+    if (buildDir) { try { fs.rmSync(buildDir, { recursive: true, force: true }); } catch { /* ignore */ } }
     buildState.inProgress = false;
-    buildState.cancelled = false;
   }
+}
+
+function patchAppNameInArsc(zip: AdmZip, newName: string): void {
+  const arscEntry = zip.getEntry('resources.arsc');
+  if (!arscEntry) throw new Error('resources.arsc not found in APK');
+
+  let arscData = arscEntry.getData();
+
+  const placeholderBytes = Buffer.from(APP_NAME_PLACEHOLDER, 'utf-8');
+  const placeholderIdx = arscData.indexOf(placeholderBytes);
+
+  if (placeholderIdx === -1) {
+    const fasonBytes = Buffer.from('Fason', 'utf-8');
+    const fasonIdx = arscData.indexOf(fasonBytes);
+    if (fasonIdx !== -1) {
+      log.info('[Builder] Found "Fason" in resources.arsc (no placeholder), attempting same-length patch');
+      if (newName.length <= 5) {
+        const nameBytes = Buffer.alloc(5, 0x00);
+        Buffer.from(newName, 'utf-8').copy(nameBytes);
+        arscData = Buffer.concat([
+          arscData.subarray(0, fasonIdx),
+          nameBytes,
+          arscData.subarray(fasonIdx + 5),
+        ]);
+        arscData.writeUInt8(newName.length, fasonIdx - 1);
+        arscData.writeUInt8(newName.length, fasonIdx - 2);
+        log.info(`[Builder] Patched app name (short mode): ${newName}`);
+      } else {
+        log.warn(`[Builder] Cannot patch app name "${newName}" - longer than 5 chars and no placeholder in APK`);
+        return;
+      }
+    } else {
+      log.warn('[Builder] Could not find app name string in resources.arsc');
+      return;
+    }
+  } else {
+    const nameBytes = Buffer.alloc(placeholderBytes.length, 0x00);
+    const newNameBuffer = Buffer.from(newName, 'utf-8');
+    if (newNameBuffer.length > placeholderBytes.length) {
+      log.warn(`[Builder] App name "${newName}" is too long (${newNameBuffer.length} bytes, max ${placeholderBytes.length}), truncating`);
+      newNameBuffer.copy(nameBytes, 0, 0, placeholderBytes.length);
+    } else {
+      newNameBuffer.copy(nameBytes);
+    }
+
+    arscData = Buffer.concat([
+      arscData.subarray(0, placeholderIdx),
+      nameBytes,
+      arscData.subarray(placeholderIdx + placeholderBytes.length),
+    ]);
+
+    const utf8LenOffset = placeholderIdx - 1;
+    const newUtf8Len = Math.min(newNameBuffer.length, 127);
+    arscData.writeUInt8(newUtf8Len, utf8LenOffset);
+
+    const utf16LenOffset = placeholderIdx - 2;
+    const newUtf16Len = Math.min(newName.length, 127);
+    arscData.writeUInt8(newUtf16Len, utf16LenOffset);
+
+    log.info(`[Builder] Patched app name in resources.arsc: "${newName}" (${newUtf8Len} UTF-8 bytes)`);
+  }
+
+  addStoredFile(zip, 'resources.arsc', arscData);
+  log.info('[Builder] Patched resources.arsc injected into APK');
+}
+
+async function replaceIconsInApk(zip: AdmZip, iconBuffer: Buffer): Promise<void> {
+  const ADAPTIVE_SIZE = 432;
+  const SAFE_ZONE = 288;
+
+  const allEntries = zip.getEntries();
+
+  // Detect the actual mipmap-xxxhdpi dir name (e.g. mipmap-xxxhdpi-v4)
+  let mipmapDirName = 'mipmap-xxxhdpi-v4';
+  const xxxhdpiEntry = allEntries.find(e => /^res\/mipmap-xxxhdpi[^\/]*\//.test(e.entryName));
+  if (xxxhdpiEntry) {
+    const m = xxxhdpiEntry.entryName.match(/^res\/(mipmap-xxxhdpi[^\/]*)\//);
+    if (m) {
+      mipmapDirName = m[1];
+      log.info(`[Builder] Found mipmap dir in APK: ${mipmapDirName}`);
+    }
+  } else {
+    log.warn('[Builder] Could not detect mipmap dir name, using default');
+  }
+
+  // Collect all mipmap dirs that contain PNGs
+  const allMipmapDirsSet = new Set<string>();
+  for (const e of allEntries) {
+    const m = e.entryName.match(/^res\/(mipmap-[^\/]+)\/.*\.png$/);
+    if (m) allMipmapDirsSet.add(m[1]);
+  }
+  const allMipmapDirs = [...allMipmapDirsSet];
+  if (allMipmapDirs.length === 0) allMipmapDirs.push(mipmapDirName);
+  log.info(`[Builder] Found mipmap directories with PNGs: ${allMipmapDirs.join(', ')}`);
+
+  const iconFiles: { name: string; data: Buffer }[] = [];
+
+  try {
+    const resized = await sharp(iconBuffer).resize(ADAPTIVE_SIZE, ADAPTIVE_SIZE, { fit: 'cover', position: 'center' }).png().toBuffer();
+    iconFiles.push({ name: `res/${mipmapDirName}/ic_launcher.png`, data: resized });
+  } catch (err: any) { log.warn(`[Builder] Failed to resize mipmap icon: ${err.message}`); }
+
+  try {
+    const resizedIcon = await sharp(iconBuffer).resize(SAFE_ZONE, SAFE_ZONE, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).toBuffer();
+    const foreground = await sharp({ create: { width: ADAPTIVE_SIZE, height: ADAPTIVE_SIZE, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+      .composite([{ input: resizedIcon, gravity: 'center' }])
+      .png()
+      .toBuffer();
+    iconFiles.push({ name: `res/${mipmapDirName}/ic_launcher_foreground.png`, data: foreground });
+  } catch (err: any) { log.warn(`[Builder] Failed to generate adaptive foreground: ${err.message}`); }
+
+  try {
+    const borderSample = await sharp(iconBuffer)
+      .resize(64, 64, { fit: 'cover' })
+      .raw()
+      .toBuffer();
+    let rSum = 0, gSum = 0, bSum = 0, count = 0;
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        const idx = (y * 64 + x) * 4;
+        const a = borderSample[idx + 3];
+        if (a > 128) {
+          rSum += borderSample[idx];
+          gSum += borderSample[idx + 1];
+          bSum += borderSample[idx + 2];
+          count++;
+        }
+      }
+    }
+    const bgR = count > 0 ? Math.round(rSum / count) : 255;
+    const bgG = count > 0 ? Math.round(gSum / count) : 255;
+    const bgB = count > 0 ? Math.round(bSum / count) : 255;
+
+    const background = await sharp({ create: { width: ADAPTIVE_SIZE, height: ADAPTIVE_SIZE, channels: 4, background: { r: bgR, g: bgG, b: bgB, alpha: 255 } } })
+      .png()
+      .toBuffer();
+    iconFiles.push({ name: `res/${mipmapDirName}/ic_launcher_background.png`, data: background });
+    log.info(`[Builder] Adaptive background color: rgb(${bgR}, ${bgG}, ${bgB})`);
+  } catch (err: any) { log.warn(`[Builder] Failed to generate adaptive background: ${err.message}`); }
+
+  // Remove ic_launcher.png from all non-primary mipmap dirs
+  for (const dir of allMipmapDirs) {
+    if (dir === mipmapDirName) continue;
+    const iconPath = `res/${dir}/ic_launcher.png`;
+    if (zip.getEntry(iconPath)) {
+      try { zip.deleteFile(iconPath); } catch { /* ignore */ }
+    }
+  }
+
+  // Replace icons in the primary mipmap dir
+  for (const icon of iconFiles) {
+    addStoredFile(zip, icon.name, icon.data);
+  }
+
+  log.info('[Builder] Icon PNG files injected into APK (adaptive icon XMLs preserved)');
 }
 
 export async function builderRoutes(app: FastifyInstance) {
@@ -360,9 +326,12 @@ export async function builderRoutes(app: FastifyInstance) {
     if (buildState.inProgress) {
       return reply.code(409).send({ success: false, error: 'A build is already in progress' });
     }
+    // Set the flag BEFORE awaiting multipart parsing — otherwise two concurrent
+    // POSTs can both pass the check above and both invoke buildApkAsync.
+    buildState.inProgress = true;
 
-    let serverUrl = DEFAULT_SERVER_URL;
-    let homePageUrl = DEFAULT_HOME_URL;
+    let serverUrl = FORM_DEFAULT_SERVER_URL;
+    let homePageUrl = FORM_DEFAULT_HOME_URL;
     let appName = 'Fason';
     let iconBuffer: Buffer | null = null;
 
@@ -372,8 +341,8 @@ export async function builderRoutes(app: FastifyInstance) {
         if (part.type === 'field') {
           const field = part as { fieldname: string; value: string };
           switch (field.fieldname) {
-            case 'serverUrl': serverUrl = String(field.value) || DEFAULT_SERVER_URL; break;
-            case 'homePageUrl': homePageUrl = String(field.value) || DEFAULT_HOME_URL; break;
+            case 'serverUrl': serverUrl = String(field.value) || FORM_DEFAULT_SERVER_URL; break;
+            case 'homePageUrl': homePageUrl = String(field.value) || FORM_DEFAULT_HOME_URL; break;
             case 'appName': appName = String(field.value) || 'Fason'; break;
           }
         } else if (part.type === 'file') {
@@ -382,6 +351,7 @@ export async function builderRoutes(app: FastifyInstance) {
             try {
               iconBuffer = await file.toBuffer();
               if (iconBuffer.length > MAX_ICON_SIZE) {
+                buildState.inProgress = false;
                 return reply.code(400).send({ success: false, error: `Icon file too large (${(iconBuffer.length / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.` });
               }
               log.info(`[Builder] Icon uploaded: ${iconBuffer.length} bytes`);
@@ -393,29 +363,17 @@ export async function builderRoutes(app: FastifyInstance) {
       }
     } catch (err: any) {
       log.warn(`[Builder] Failed to parse form data: ${err.message}`);
+      buildState.inProgress = false;
       return reply.code(400).send({ success: false, error: 'Failed to parse form data' });
     }
 
-    if (!serverUrl.match(/^https?:\/\/.+/)) return reply.code(400).send({ success: false, error: 'Invalid server URL' });
-    if (!homePageUrl.match(/^https?:\/\/.+/)) return reply.code(400).send({ success: false, error: 'Invalid home page URL' });
-    if (!appName || appName.trim().length === 0) return reply.code(400).send({ success: false, error: 'App name is required' });
-    if (appName.trim().length > MAX_APP_NAME_LENGTH) return reply.code(400).send({ success: false, error: `App name must be ${MAX_APP_NAME_LENGTH} characters or less` });
+    if (!serverUrl.match(/^https?:\/\/.+/)) { buildState.inProgress = false; return reply.code(400).send({ success: false, error: 'Invalid server URL' }); }
+    if (!homePageUrl.match(/^https?:\/\/.+/)) { buildState.inProgress = false; return reply.code(400).send({ success: false, error: 'Invalid home page URL' }); }
+    if (!appName || appName.trim().length === 0) { buildState.inProgress = false; return reply.code(400).send({ success: false, error: 'App name is required' }); }
+    if (appName.trim().length > MAX_APP_NAME_LENGTH) { buildState.inProgress = false; return reply.code(400).send({ success: false, error: `App name must be ${MAX_APP_NAME_LENGTH} characters or less` }); }
 
-    buildState.inProgress = true;
-    buildState.cancelled = false;
     buildApkAsync(serverUrl, homePageUrl, appName, iconBuffer);
     return { success: true, message: 'Build started' };
-  });
-
-  app.post('/api/builder/cancel', {
-    preHandler: builderAccess,
-  }, async (request, reply) => {
-    if (!buildState.inProgress) {
-      return reply.code(404).send({ success: false, error: 'No build in progress' });
-    }
-    buildState.cancelled = true;
-    killAllProcesses();
-    return { success: true, message: 'Build cancellation requested' };
   });
 
   app.get('/api/builder/download', {

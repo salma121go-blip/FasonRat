@@ -2,7 +2,6 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { getDb, dbHelpers } from '../db/index.js';
 import { sessions } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
-import { getConfig } from '../config/index.js';
 import { resolvePermissions } from '../types/index.js';
 import type { JwtPayload, UserRole, Permission } from '../types/index.js';
 
@@ -39,13 +38,36 @@ export async function authMiddleware(request: FastifyRequest, reply: FastifyRepl
     }
 
     const d = getDb();
-    const activeSession = d.select({ token: sessions.token }).from(sessions)
-      .where(eq(sessions.userId, user.id))
-      .get();
-    if (!activeSession) {
-      reply.clearCookie('token', { path: '/' });
-      reply.code(401).send({ success: false, error: 'Session expired. Please log in again.' });
-      return;
+    if (decoded.sessionId) {
+      const activeSession = d.select({ token: sessions.token, expiresAt: sessions.expiresAt }).from(sessions)
+        .where(eq(sessions.token, decoded.sessionId))
+        .get();
+      if (!activeSession) {
+        reply.clearCookie('token', { path: '/' });
+        reply.code(401).send({ success: false, error: 'Session expired. Please log in again.' });
+        return;
+      }
+      if (new Date(activeSession.expiresAt) < new Date()) {
+        d.delete(sessions).where(eq(sessions.token, activeSession.token)).run();
+        reply.clearCookie('token', { path: '/' });
+        reply.code(401).send({ success: false, error: 'Session expired. Please log in again.' });
+        return;
+      }
+    } else {
+      const activeSession = d.select({ token: sessions.token, expiresAt: sessions.expiresAt }).from(sessions)
+        .where(eq(sessions.userId, user.id))
+        .get();
+      if (!activeSession) {
+        reply.clearCookie('token', { path: '/' });
+        reply.code(401).send({ success: false, error: 'Session expired. Please log in again.' });
+        return;
+      }
+      if (new Date(activeSession.expiresAt) < new Date()) {
+        d.delete(sessions).where(eq(sessions.token, activeSession.token)).run();
+        reply.clearCookie('token', { path: '/' });
+        reply.code(401).send({ success: false, error: 'Session expired. Please log in again.' });
+        return;
+      }
     }
 
     const permissions = resolvePermissions(user.role as UserRole, user.permissions);
@@ -56,6 +78,8 @@ export async function authMiddleware(request: FastifyRequest, reply: FastifyRepl
       email: user.email,
       role: user.role as UserRole,
       permissions,
+
+      sessionId: decoded.sessionId,
     };
     (request as unknown as Record<string, unknown>).token = token;
   } catch {
@@ -83,7 +107,6 @@ export function hasPermission(user: JwtPayload | undefined, permission: Permissi
   return user.permissions.includes(permission);
 }
 
-/** Extract authenticated user from request (set by authMiddleware). */
 export function getRequestUser(request: FastifyRequest): JwtPayload {
   return request.user as JwtPayload;
 }
@@ -103,25 +126,5 @@ export function verifyJwtToken(token: string, jwtVerify: (token: string) => unkn
     };
   } catch {
     return null;
-  }
-}
-
-let sessionCleanupTimer: NodeJS.Timeout | null = null;
-
-export function startSessionCleanup(): void {
-  if (sessionCleanupTimer) return;
-  const config = getConfig();
-  sessionCleanupTimer = setInterval(() => {
-    try {
-      dbHelpers.cleanExpiredSessions();
-      dbHelpers.cleanLoginAttempts(config.security.loginLockout);
-    } catch { /* ignore */ }
-  }, 60000);
-}
-
-export function stopSessionCleanup(): void {
-  if (sessionCleanupTimer) {
-    clearInterval(sessionCleanupTimer);
-    sessionCleanupTimer = null;
   }
 }

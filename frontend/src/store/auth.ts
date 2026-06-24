@@ -76,7 +76,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const res = await authApi.login(username, password);
       if (res.data.success) {
         const data = res.data.data;
-        // Store JWT token separately for socket auth (not in auth-user to limit XSS exposure)
+
         if (data.token) {
           localStorage.setItem('auth-token', data.token);
         }
@@ -122,6 +122,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         };
         localStorage.setItem('auth-user', JSON.stringify(userData));
         set({ user: userData, isAuthenticated: true, isChecking: false });
+      } else {
+        localStorage.removeItem('auth-user');
+        localStorage.removeItem('auth-token');
+        set({ user: null, isAuthenticated: false, isChecking: false });
       }
     } catch {
       localStorage.removeItem('auth-user');

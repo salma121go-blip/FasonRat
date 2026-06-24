@@ -16,7 +16,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-const AUTH_WHITELIST = ['/api/auth/login'];
+const AUTH_WHITELIST = ['/auth/login', '/auth/logout', '/auth/me'];
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -41,6 +41,8 @@ export const authApi = {
   me: () => api.get('/auth/me'),
   changePassword: (currentPassword: string, newPassword: string) => api.post('/auth/change-password', { currentPassword, newPassword }),
   updateProfile: (data: { username?: string; email?: string }) => api.post('/auth/update-profile', data),
+  sessions: () => api.get('/auth/sessions'),
+  revokeSession: (id: number) => api.delete(`/auth/sessions/${id}`),
 };
 
 export const dashboardApi = { getData: () => api.get('/dashboard') };
@@ -48,7 +50,7 @@ export const dashboardApi = { getData: () => api.get('/dashboard') };
 export const clientsApi = {
   getAll: () => api.get('/clients'),
   getOne: (id: string) => api.get(`/client/${id}`),
-  getPage: (id: string, page: string) => api.get(`/client/${id}/${page}`),
+  getPage: (id: string, page: string, signal?: AbortSignal) => api.get(`/client/${id}/${page}`, { signal }),
   delete: (id: string) => api.delete(`/client/${id}`),
   sendCommand: (id: string, cmd: string, params?: Record<string, unknown>) => api.post(`/cmd/${id}/${cmd}`, params || {}),
   setGps: (id: string, interval: number) => api.post(`/gps/${id}/${interval}`),
@@ -62,8 +64,19 @@ export const logsApi = {
 
 export const builderApi = {
   build: (formData: FormData) => api.post('/builder/build', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 600000 }),
-  cancelBuild: () => api.post('/builder/cancel'),
   downloadApk: (onProgress?: (progressEvent: { loaded: number; total?: number }) => void) => api.get('/builder/download', { responseType: 'blob', timeout: 300000, onDownloadProgress: onProgress }),
+};
+
+export const filesApi = {
+  pushToDevice: (clientId: string, dstPath: string, file: File, onProgress?: (progressEvent: { loaded: number; total?: number }) => void) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post(`/files/push?clientId=${encodeURIComponent(clientId)}&dst=${encodeURIComponent(dstPath)}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000,
+      onUploadProgress: onProgress,
+    });
+  },
 };
 
 export const usersApi = {
@@ -74,4 +87,10 @@ export const usersApi = {
   getPermissionsSchema: () => api.get('/users/permissions-schema'),
   resetPassword: (id: number, password: string) => api.put(`/users/${id}/password`, { password }),
   delete: (id: number) => api.delete(`/users/${id}`),
+};
+
+export const configApi = {
+  get: () => api.get('/config'),
+
+  setDeviceSecret: (value: string) => api.post('/config/device-secret', { value }),
 };

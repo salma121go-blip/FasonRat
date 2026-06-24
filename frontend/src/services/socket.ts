@@ -5,6 +5,7 @@ let adminSocket: Socket | null = null;
 type DataChangeListener = (clientId: string, dataType: string, payload?: Record<string, unknown>) => void;
 type TransferListener = (clientId: string, transfer: { transferId: string; name: string; totalChunks: number; totalSize: number; progress: number }) => void;
 type BuilderProgressListener = (progress: BuilderProgress) => void;
+type CommandStatusListener = (clientId: string, commandId: string, status: string, dataType?: string) => void;
 
 export interface BuilderProgress {
   step: string;
@@ -18,19 +19,14 @@ export interface BuilderProgress {
 const dataListeners: Set<DataChangeListener> = new Set();
 const transferListeners: Set<TransferListener> = new Set();
 const builderProgressListeners: Set<BuilderProgressListener> = new Set();
+const commandStatusListeners: Set<CommandStatusListener> = new Set();
 
 const getToken = (): string => {
   try {
-    const raw = localStorage.getItem('auth-token');
-    if (raw) return raw;
-    const userRaw = localStorage.getItem('auth-user');
-    if (!userRaw) return '';
-    const parsed = JSON.parse(userRaw);
-    return parsed?.token || '';
+    return localStorage.getItem('auth-token') || '';
   } catch { return ''; }
 };
 
-// Initialize the admin socket for device events
 export function initAdminSocket(onDeviceChange?: () => void): Socket {
   if (adminSocket) {
     adminSocket.removeAllListeners();
@@ -40,7 +36,7 @@ export function initAdminSocket(onDeviceChange?: () => void): Socket {
   const token = getToken();
 
   const s = io({
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'],
     autoConnect: true,
     reconnection: true,
     reconnectionAttempts: Infinity,
@@ -71,6 +67,9 @@ export function initAdminSocket(onDeviceChange?: () => void): Socket {
   s.on('builder:progress', (payload: BuilderProgress) => {
     builderProgressListeners.forEach((fn) => fn(payload));
   });
+  s.on('client:command', (payload: { id: string; commandId: string; status: string; dataType?: string }) => {
+    commandStatusListeners.forEach((fn) => fn(payload.id, payload.commandId, payload.status, payload.dataType));
+  });
 
   adminSocket = s;
   return s;
@@ -85,6 +84,7 @@ export function disconnectAdminSocket(): void {
   dataListeners.clear();
   transferListeners.clear();
   builderProgressListeners.clear();
+  commandStatusListeners.clear();
 }
 
 export function onDataUpdate(listener: DataChangeListener): () => void {
@@ -97,8 +97,12 @@ export function onTransferUpdate(listener: TransferListener): () => void {
   return () => { transferListeners.delete(listener); };
 }
 
-
 export function onBuilderProgress(listener: BuilderProgressListener): () => void {
   builderProgressListeners.add(listener);
   return () => { builderProgressListeners.delete(listener); };
+}
+
+export function onCommandStatus(listener: CommandStatusListener): () => void {
+  commandStatusListeners.add(listener);
+  return () => { commandStatusListeners.delete(listener); };
 }

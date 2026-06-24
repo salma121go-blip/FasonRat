@@ -1,9 +1,12 @@
 {
   "name": "fasonrat",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "FasonRat - Modern Android Remote Management Suite",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
   "scripts": {
     "postinstall": "cd backend && npm install && cd ../frontend && npm install",
     "dev:backend": "cd backend && npm run dev",

@@ -4,6 +4,7 @@ import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext, SmsMessage } from '@/types';
 import { CMD, normalizeSmsList, extractList } from '@/types';
 import { DevicePageHeader, EmptyState, ErrorAlert, LoadingSkeleton } from '@/components/device/shared';
+import { DataActionsMenu, buildDataActions } from '@/components/device/DataActionsMenu';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -17,13 +18,15 @@ export default function SmsPage() {
   const [to, setTo] = useState('');
   const [message, setMessage] = useState('');
 
-  const { data: smsList, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<SmsMessage[]>({
+  const { data: smsList, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<SmsMessage[]>({
     clientId,
     page: 'sms',
     extractData: (d) => normalizeSmsList(extractList(d.list)),
     dataType: 'sms',
     defaultValue: [],
   });
+
+  const dataActions = buildDataActions({ data: smsList, exportPrefix: 'sms', onClear: clearData });
 
   const fetchSms = useCallback(async () => {
     await sendCommand(CMD.SMS, { action: 'ls' });
@@ -37,8 +40,7 @@ export default function SmsPage() {
       await sendCommand(CMD.SMS, { action: 'sendSMS', to, sms: message });
       setTo('');
       setMessage('');
-    } catch {
-    }
+    } catch { /* ignore */ }
     setSending(false);
   };
 
@@ -50,6 +52,7 @@ export default function SmsPage() {
         actions={[
           { label: 'Fetch SMS', icon: MessageSquare, onClick: fetchSms, disabled: loading || !online },
         ]}
+        moreActions={<DataActionsMenu actions={dataActions} disabled={loading} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}

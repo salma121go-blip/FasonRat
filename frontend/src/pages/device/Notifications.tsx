@@ -4,6 +4,7 @@ import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext, NotificationEntry, NotificationStatus } from '@/types';
 import { CMD } from '@/types';
 import { DevicePageHeader, EmptyState, ErrorAlert, StatusBadge, LoadingSkeleton } from '@/components/device/shared';
+import { DataActionsMenu, buildDataActions } from '@/components/device/DataActionsMenu';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Bell, Eye, Pin, XCircle } from 'lucide-react';
@@ -11,7 +12,7 @@ import { Bell, Eye, Pin, XCircle } from 'lucide-react';
 export default function NotificationsPage() {
   const { clientId, online } = useOutletContext<DeviceOutletContext>();
 
-  const { data: rawData, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<{
+  const { data: rawData, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<{
     notifications: NotificationEntry[];
     status: NotificationStatus | null;
   }>({
@@ -27,6 +28,8 @@ export default function NotificationsPage() {
 
   const notifications = rawData.notifications;
   const notifStatus = rawData.status;
+
+  const dataActions = buildDataActions({ data: notifications, exportPrefix: 'notifications', onClear: clearData });
 
   const requestAccess = useCallback(async () => {
     await sendCommand(CMD.NOTIFICATIONS, { action: 'request' });
@@ -53,6 +56,7 @@ export default function NotificationsPage() {
           { label: 'Enable', icon: Bell, onClick: requestAccess, disabled: loading || !online },
           { label: 'Status', icon: Eye, onClick: checkStatus, disabled: loading || !online, variant: 'outline' },
         ]}
+        moreActions={<DataActionsMenu actions={dataActions} disabled={loading} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}

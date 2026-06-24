@@ -47,23 +47,36 @@ class TaskManager {
 export const taskManager = new TaskManager();
 
 taskManager.register('cleanup', 3600000, () => {
-  const deleted = socketService.cleanupStaleClients();
-  if (deleted > 0) log.info(`Cleaned up ${deleted} stale clients`);
-  const sessions = dbHelpers.cleanExpiredSessions();
-  if (sessions > 0) log.info(`Cleaned ${sessions} expired sessions`);
-  dbHelpers.cleanLoginAttempts(getConfig().security.loginLockout);
-});
+  try {
+    const deleted = socketService.cleanupStaleClients();
+    if (deleted > 0) log.info(`Cleaned up ${deleted} stale clients`);
+  } catch (err: unknown) { log.error(`cleanup: stale clients: ${err instanceof Error ? err.message : String(err)}`); }
+  try {
+    const sessions = dbHelpers.cleanExpiredSessions();
+    if (sessions > 0) log.info(`Cleaned ${sessions} expired sessions`);
+  } catch (err: unknown) { log.error(`cleanup: sessions: ${err instanceof Error ? err.message : String(err)}`); }
+  try {
+    dbHelpers.cleanLoginAttempts(getConfig().security.loginLockout);
+  } catch (err: unknown) { log.error(`cleanup: login attempts: ${err instanceof Error ? err.message : String(err)}`); }
+  try {
+    const cmds = dbHelpers.cleanOldCommands();
+    if (cmds > 0) log.info(`Cleaned ${cmds} old commands`);
+  } catch (err: unknown) { log.error(`cleanup: commands: ${err instanceof Error ? err.message : String(err)}`); }
+}, false);
 
 taskManager.register('heartbeat', 30000, () => {
   try {
     const d = getSqliteDb();
     const onlineInDb = d.prepare('SELECT id FROM clients WHERE online = 1').all() as Array<{ id: string }>;
+    const nowIso = new Date().toISOString();
     for (const client of onlineInDb) {
       if (!socketService.isClientConnected(client.id)) {
-        d.prepare("UPDATE clients SET online = 0, last_seen = datetime('now') WHERE id = ?").run(client.id);
+        d.prepare('UPDATE clients SET online = 0, last_seen = ? WHERE id = ?').run(nowIso, client.id);
       }
     }
-  } catch { /* ignore */ }
+  } catch (err: unknown) {
+    log.error(`Heartbeat error: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }, false);
 
 taskManager.register('transferCleanup', 300000, () => {

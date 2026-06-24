@@ -14,8 +14,9 @@ const paths = {
   dbPath: path.join(DATA_DIR, 'fasonrat.db'),
   factoryDir: path.join(ROOT_DIR, 'app', 'factory'),
   baseApkPath: path.join(ROOT_DIR, 'app', 'factory', 'baseApp', 'Fason.apk'),
-  apkToolPath: path.join(ROOT_DIR, 'app', 'factory', 'apktool.jar'),
   signerPath: path.join(ROOT_DIR, 'app', 'factory', 'uber-apk-signer.jar'),
+
+  workDir: path.join(DATA_DIR, 'build', 'work'),
 };
 
 function ensureDataDir(): void {

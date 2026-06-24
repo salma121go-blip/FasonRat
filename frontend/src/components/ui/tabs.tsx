@@ -1,11 +1,8 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
-function Tabs({ className, ...props }: React.ComponentProps<"div"> & {
-  value?: string;
-  onValueChange?: (value: string) => void;
-}) {
-  return <div className={cn("", className)} {...props} />
+function Tabs({ className, ...props }: React.ComponentProps<"div">) {
+  return <div className={className} {...props} />
 }
 
 function TabsList({ className, ...props }: React.ComponentProps<"div">) {

@@ -1,10 +1,11 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext, ClientFile } from '@/types';
-import { CMD, extractList } from '@/types';
+import { CMD } from '@/types';
 import { DevicePageHeader, EmptyState, ErrorAlert, SectionCard, StatusBadge, LoadingSkeleton } from '@/components/device/shared';
-import { Mic as MicIcon, Square, CircleStop } from 'lucide-react';
+import { DataActionsMenu, buildFileActions } from '@/components/device/DataActionsMenu';
+import { Mic as MicIcon, CircleStop } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { onDataUpdate } from '@/services/socket';
@@ -16,7 +17,7 @@ export default function MicPage() {
   const [duration, setDuration] = useState('30');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { data: rawData, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<{
+  const { data: rawData, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<{
     recordings: ClientFile[];
     status: { status?: string; duration?: number } | null;
   }>({
@@ -32,11 +33,22 @@ export default function MicPage() {
 
   const recordings = rawData.recordings;
 
+  const [exporting, setExporting] = useState(false);
+
+  const fileActions = buildFileActions({
+    files: recordings.map((r) => ({ url: `/api/files/recordings/${clientId}/${r.id}`, name: r.originalName })),
+    metadata: recordings,
+    exportPrefix: 'mic-recordings',
+    onClear: clearData,
+    onExportStart: () => setExporting(true),
+    onExportEnd: () => setExporting(false),
+  });
+
   useEffect(() => {
     if (rawData.status?.status && !micStatus) {
       setMicStatus(rawData.status.status);
     }
-  }, [rawData.status]);
+  }, [rawData.status, micStatus]);
 
   useEffect(() => {
     const unsub = onDataUpdate((cid, dataType, payload) => {
@@ -84,8 +96,7 @@ export default function MicPage() {
   const stopRecording = async () => {
     try {
       await sendCommand(CMD.MIC, { action: 'stop' });
-    } catch {
-    }
+    } catch { /* ignore */ }
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -98,6 +109,7 @@ export default function MicPage() {
       <DevicePageHeader
         title="Microphone"
         subtitle={`${recordings.length} recordings`}
+        moreActions={<DataActionsMenu actions={fileActions} disabled={loading} loadingLabel={exporting ? 'Export ZIP' : null} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}

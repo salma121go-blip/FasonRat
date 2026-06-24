@@ -92,7 +92,21 @@ export const settings = sqliteTable('settings', {
 export const loginAttempts = sqliteTable('login_attempts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   ip: text('ip').notNull(),
+
+  identifier: text('identifier').notNull().default(''),
   attemptedAt: text('attempted_at').notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const commands = sqliteTable('commands', {
+  id: text('id').primaryKey(),
+  clientId: text('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
+  cmdType: text('cmd_type').notNull(),
+  params: text('params').default('{}'),
+  status: text('status', { enum: ['sent', 'delivered', 'responded', 'failed'] }).notNull().default('sent'),
+  sentAt: text('sent_at').notNull().$defaultFn(() => new Date().toISOString()),
+  deliveredAt: text('delivered_at'),
+  respondedAt: text('responded_at'),
+  responseSummary: text('response_summary'),
 });
 
 export const jwtSecret = sqliteTable('jwt_secret', {

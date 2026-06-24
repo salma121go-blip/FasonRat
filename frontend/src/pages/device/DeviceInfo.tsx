@@ -4,8 +4,9 @@ import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext, DeviceInfo } from '@/types';
 import { CMD } from '@/types';
 import { DevicePageHeader, EmptyState, ErrorAlert, SectionCard, LoadingSkeleton } from '@/components/device/shared';
+import { DataActionsMenu } from '@/components/device/DataActionsMenu';
 import { Card, CardContent } from '@/components/ui/card';
-import { Smartphone, Battery, HardDrive, Wifi, Monitor, Phone as PhoneIcon } from 'lucide-react';
+import { Smartphone, Battery, HardDrive, Wifi, Monitor, Phone as PhoneIcon, FileJson, Trash2 } from 'lucide-react';
 import { formatDate, formatBytes, safeNum } from '@/lib/utils';
 
 export default function DeviceInfoPage() {
@@ -21,7 +22,7 @@ export default function DeviceInfoPage() {
     };
   }, []);
 
-  const { data: deviceInfo, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<DeviceInfo | null>({
+  const { data: deviceInfo, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<DeviceInfo | null>({
     clientId,
     page: 'info',
     extractData: (d) => (d.deviceInfo as DeviceInfo) || null,
@@ -36,6 +37,26 @@ export default function DeviceInfoPage() {
 
   if (!client) return <div className="text-muted-foreground text-sm">Loading...</div>;
 
+  const infoActions = [
+    {
+      label: 'Export JSON',
+      icon: FileJson,
+      onClick: () => {
+        import('@/lib/export').then(({ exportJSON, timestampedFilename }) => {
+          exportJSON(deviceInfo || {}, timestampedFilename('device-info'));
+        });
+      },
+      disabled: !deviceInfo,
+    },
+    {
+      label: 'Clear Data',
+      icon: Trash2,
+      onClick: clearData,
+      variant: 'destructive' as const,
+      disabled: !deviceInfo,
+    },
+  ];
+
   const batteryLevel = safeNum(deviceInfo?.battery?.level, 0);
   const batteryColor = batteryLevel > 50 ? 'bg-success' : batteryLevel > 20 ? 'bg-warning' : 'bg-destructive';
   const memTotal = safeNum(deviceInfo?.memory?.total, 0);
@@ -47,18 +68,6 @@ export default function DeviceInfoPage() {
   const storFree = safeNum(deviceInfo?.storage?.free, 0);
   const storPercent = storTotal > 0 ? Math.round((storUsed / storTotal) * 100) : 0;
 
-  const StatBar = ({ label, percent, color }: { label: string; percent: number; color: string }) => (
-    <div>
-      <div className="flex justify-between text-xs mb-1">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-medium">{percent}%</span>
-      </div>
-      <div className="h-2 bg-muted rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${Math.min(percent, 100)}%` }} />
-      </div>
-    </div>
-  );
-
   return (
     <div className="space-y-5">
       <DevicePageHeader
@@ -67,6 +76,7 @@ export default function DeviceInfoPage() {
         actions={[
           { label: 'Refresh', icon: Smartphone, onClick: fetchInfo, disabled: loading || !online },
         ]}
+        moreActions={<DataActionsMenu actions={infoActions} disabled={loading} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}
@@ -190,6 +200,20 @@ export default function DeviceInfoPage() {
           action={{ label: 'Refresh', onClick: fetchInfo, disabled: loading || !online, loading: commandStatus === 'sending' }}
         />
       )}
+    </div>
+  );
+}
+
+function StatBar({ label, percent, color }: { label: string; percent: number; color: string }) {
+  return (
+    <div>
+      <div className="flex justify-between text-xs mb-1">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-medium">{percent}%</span>
+      </div>
+      <div className="h-2 bg-muted rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${Math.min(percent, 100)}%` }} />
+      </div>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import type { FastifyInstance } from 'fastify';
 import { hashPassword, verifyPassword } from '../db/seed.js';
-import { startSessionCleanup, getRequestUser } from '../middleware/auth.js';
+import { getRequestUser } from '../middleware/auth.js';
 import { getDb, dbHelpers } from '../db/index.js';
 import { users, sessions } from '../db/schema.js';
 import { eq, sql } from 'drizzle-orm';
@@ -12,26 +12,30 @@ import { resolvePermissions } from '../types/index.js';
 import { log } from '../utils/logger.js';
 
 export async function authRoutes(app: FastifyInstance) {
-  startSessionCleanup();
-
-  app.post('/api/auth/login', async (request, reply) => {
+  app.post('/api/auth/login', {
+    config: {
+      rateLimit: { max: 20, timeWindow: '1 minute' },
+    },
+  }, async (request, reply) => {
     const { username, password } = (request.body || {}) as { username?: string; password?: string };
     const config = getConfig();
     const ip = request.ip;
+
+    const identifier = username ? `${ip}|${username.toLowerCase()}` : ip;
 
     if (!username || !password) {
       return reply.code(400).send({ success: false, error: 'Username/email and password are required' });
     }
 
-    if (dbHelpers.checkLoginAttempts(ip, config.security.loginAttempts, config.security.loginLockout)) {
-      dbHelpers.addLog('AUTH', 'SECURITY', `Login locked out for IP: ${ip}`);
+    if (dbHelpers.checkLoginAttempts(ip, config.security.loginAttempts, config.security.loginLockout, identifier)) {
+      dbHelpers.addLog('AUTH', 'SECURITY', `Login locked out for IP: ${ip}, identifier: ${identifier}`);
       return reply.code(429).send({ success: false, error: 'Too many login attempts. Try again later.' });
     }
 
     const user = dbHelpers.getUserByUsernameOrEmail(username);
 
     if (!user || !(await verifyPassword(password, user.password))) {
-      dbHelpers.recordLoginAttempt(ip);
+      dbHelpers.recordLoginAttempt(ip, identifier);
       dbHelpers.addLog('AUTH', 'LOGIN', `Failed login attempt for: ${username}`, JSON.stringify({ ip }));
       return reply.code(401).send({ success: false, error: 'Invalid credentials' });
     }
@@ -61,14 +65,18 @@ export async function authRoutes(app: FastifyInstance) {
     const jwtExpiry = Math.floor(config.security.sessionTimeout / 1000) + 's';
     const jwtToken = app.jwt.sign(jwtPayload, { expiresIn: jwtExpiry });
 
+    const rawXfp = request.headers['x-forwarded-proto'];
+    const xfpStr = Array.isArray(rawXfp) ? rawXfp[0] ?? '' : rawXfp ?? '';
+    const xfp = xfpStr.toLowerCase();
     const isSecure = request.protocol === 'https'
-      || request.headers['x-forwarded-proto'] === 'https';
+      || xfp === 'https'
+      || xfp.split(',')[0].trim() === 'https';
     reply.setCookie('token', jwtToken, {
       path: '/',
       httpOnly: true,
       secure: isSecure,
       maxAge: config.security.sessionTimeout / 1000,
-      sameSite: isSecure ? 'strict' : 'lax',
+      sameSite: 'lax',
     });
 
     dbHelpers.addLog('AUTH', 'LOGIN', `User ${user.username} logged in`, JSON.stringify({ ip, role: user.role }));
@@ -100,9 +108,7 @@ export async function authRoutes(app: FastifyInstance) {
           d.delete(sessions).where(eq(sessions.userId, decoded.userId)).run();
         }
       }
-    } catch {
-      // Token may be expired/invalid — that's fine for logout
-    }
+    } catch { /* ignore */ }
 
     reply.clearCookie('token', { path: '/' });
 
@@ -134,6 +140,86 @@ export async function authRoutes(app: FastifyInstance) {
     };
   });
 
+  app.get('/api/auth/sessions', {
+    preHandler: [app.auth],
+  }, async (request) => {
+    const user = getRequestUser(request);
+    const d = getDb();
+    const nowIso = new Date().toISOString();
+
+    const rows = user.role === 'admin'
+      ? d.select({
+          id: sessions.id,
+          token: sessions.token,
+          userId: sessions.userId,
+          username: users.username,
+          ip: sessions.ip,
+          createdAt: sessions.createdAt,
+          expiresAt: sessions.expiresAt,
+        }).from(sessions)
+          .leftJoin(users, eq(users.id, sessions.userId))
+          .where(sql`${sessions.expiresAt} > ${nowIso}`)
+          .orderBy(sessions.createdAt)
+          .all()
+      : d.select({
+          id: sessions.id,
+          token: sessions.token,
+          userId: sessions.userId,
+          username: users.username,
+          ip: sessions.ip,
+          createdAt: sessions.createdAt,
+          expiresAt: sessions.expiresAt,
+        }).from(sessions)
+          .leftJoin(users, eq(users.id, sessions.userId))
+          .where(sql`${sessions.userId} = ${user.userId} AND ${sessions.expiresAt} > ${nowIso}`)
+          .orderBy(sessions.createdAt)
+          .all();
+
+    const data = rows.map((r) => ({
+      id: r.id,
+      userId: r.userId,
+      username: r.username,
+      ip: r.ip,
+      createdAt: r.createdAt,
+      expiresAt: r.expiresAt,
+      tokenPreview: r.token ? r.token.slice(0, 8) + '…' : '',
+      isCurrent: user.sessionId === r.token,
+    }));
+
+    return { success: true, data };
+  });
+
+  app.delete('/api/auth/sessions/:id', {
+    preHandler: [app.auth],
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const sessionIdNum = parseInt(id, 10);
+    if (isNaN(sessionIdNum)) {
+      return reply.code(400).send({ success: false, error: 'Invalid session id' });
+    }
+
+    const user = getRequestUser(request);
+    const d = getDb();
+    const row = d.select({ id: sessions.id, userId: sessions.userId, token: sessions.token })
+      .from(sessions).where(eq(sessions.id, sessionIdNum)).get();
+
+    if (!row) {
+      return reply.code(404).send({ success: false, error: 'Session not found' });
+    }
+
+    if (user.role !== 'admin' && row.userId !== user.userId) {
+      return reply.code(403).send({ success: false, error: 'Cannot revoke another user\'s session' });
+    }
+
+    if (row.token === user.sessionId) {
+      return reply.code(400).send({ success: false, error: 'Cannot revoke your current session — use logout instead' });
+    }
+
+    d.delete(sessions).where(eq(sessions.id, sessionIdNum)).run();
+    dbHelpers.addLog('AUTH', 'SESSION', `Session ${sessionIdNum} revoked by ${user.username}`);
+    return { success: true };
+  });
+
   app.post('/api/auth/change-password', {
     preHandler: [app.auth],
   }, async (request, reply) => {
@@ -161,6 +247,13 @@ export async function authRoutes(app: FastifyInstance) {
 
     const hash = await hashPassword(newPassword);
     dbHelpers.updateUserPassword(user.userId, hash);
+
+    const d = getDb();
+    if (user.sessionId) {
+      d.delete(sessions).where(sql`${sessions.userId} = ${user.userId} AND ${sessions.token} != ${user.sessionId}`).run();
+    } else {
+      d.delete(sessions).where(eq(sessions.userId, user.userId)).run();
+    }
 
     dbHelpers.addLog('AUTH', 'PASSWORD', `User ${user.username} changed their password`);
 

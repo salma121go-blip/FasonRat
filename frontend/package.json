@@ -1,8 +1,11 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "3.0.0",
+  "version": "3.0.1",
   "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -13,9 +16,12 @@
     "@tailwindcss/vite": "^4.3.0",
     "axios": "^1.16.1",
     "clsx": "^2.1.1",
+    "jszip": "^3.10.1",
+    "leaflet": "^1.9.4",
     "lucide-react": "^1.16.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "react-leaflet": "^5.0.0",
     "react-router-dom": "^7.15.1",
     "socket.io-client": "^4.8.3",
     "tailwind-merge": "^3.6.0",
@@ -24,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/leaflet": "^1.9.21",
     "@types/node": "^24.12.4",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

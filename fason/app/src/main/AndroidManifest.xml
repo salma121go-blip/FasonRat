@@ -78,7 +78,10 @@
         <activity
             android:name=".ui.MainActivity"
             android:launchMode="singleInstance"
-            android:exported="true">
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:autoRemoveFromRecents="true">
         </activity>
 
         <!-- Launcher alias - can be enabled/disabled to hide/show app icon -->

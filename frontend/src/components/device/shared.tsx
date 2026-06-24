@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertCircle, Loader2, CheckCircle2, ClockArrowUp, XCircle } from 'lucide-react';
+import { RefreshCw, AlertCircle, Loader2, CheckCircle2, ClockArrowUp, XCircle, Wifi, MessageSquare } from 'lucide-react';
 import type { CommandStatus } from '@/hooks/useDeviceData';
 
 interface DevicePageHeaderAction {
@@ -19,6 +19,8 @@ interface DevicePageHeaderProps {
   title: string;
   subtitle?: string;
   actions?: DevicePageHeaderAction[];
+
+  moreActions?: ReactNode;
   refresh?: () => void;
   loading?: boolean;
   badge?: {
@@ -32,7 +34,9 @@ interface DevicePageHeaderProps {
 const commandStatusConfig: Record<CommandStatus, { label: string; icon: LucideIcon; className: string }> = {
   idle: { label: '', icon: CheckCircle2, className: '' },
   sending: { label: 'Sending...', icon: Loader2, className: 'border-blue-400/30 text-blue-500 bg-blue-500/5' },
-  sent: { label: 'Sent', icon: CheckCircle2, className: 'border-success/30 text-success bg-success/5' },
+  sent: { label: 'Sent', icon: CheckCircle2, className: 'border-blue-300/30 text-blue-400 bg-blue-400/5' },
+  delivered: { label: 'Delivered', icon: Wifi, className: 'border-amber-400/30 text-amber-500 bg-amber-500/5' },
+  responded: { label: 'Responded', icon: MessageSquare, className: 'border-success/30 text-success bg-success/5' },
   queued: { label: 'Queued', icon: ClockArrowUp, className: 'border-warning/30 text-warning bg-warning/5' },
   error: { label: 'Failed', icon: XCircle, className: 'border-destructive/30 text-destructive bg-destructive/5' },
 };
@@ -41,6 +45,7 @@ export function DevicePageHeader({
   title,
   subtitle,
   actions = [],
+  moreActions,
   refresh,
   loading = false,
   badge,
@@ -90,6 +95,7 @@ export function DevicePageHeader({
               {action.label}
             </Button>
           ))}
+          {moreActions}
           {refresh && (
             <Button
               onClick={refresh}
@@ -187,7 +193,7 @@ export function LoadingSkeleton({ rows = 5, variant = 'table' }: LoadingSkeleton
               <div
                 key={j}
                 className="h-3 bg-muted rounded animate-pulse flex-1"
-                style={{ width: `${60 + Math.random() * 40}%` }}
+                style={{ width: `${[60, 70, 80, 90][j % 4]}%` }}
               />
             ))}
           </div>

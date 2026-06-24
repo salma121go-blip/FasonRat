@@ -9,6 +9,18 @@ import { getConfig } from '../config/index.js';
 import { dbHelpers } from '../db/index.js';
 
 async function plugins(app: FastifyInstance) {
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    if (!body || (typeof body === 'string' && body.trim() === '')) {
+      done(null, {});
+      return;
+    }
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
+
   const config = getConfig();
 
   await app.register(cookie);

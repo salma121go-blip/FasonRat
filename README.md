@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-3.0.0-7C3AED?style=flat-square&logo=semver&logoColor=white" alt="Version 3.0.0">
+  <img src="https://img.shields.io/badge/Version-3.0.1-7C3AED?style=flat-square&logo=semver&logoColor=white" alt="Version 3.0.1">
   <img src="https://img.shields.io/badge/Android-10+-34D399?style=flat-square&logo=android&logoColor=white" alt="Android 10+">
   <img src="https://img.shields.io/badge/Node.js-22+-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 22+">
   <img src="https://img.shields.io/badge/Fastify-5-20223A?style=flat-square&logo=fastify&logoColor=white" alt="Fastify 5">

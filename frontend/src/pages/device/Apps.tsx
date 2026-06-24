@@ -4,6 +4,7 @@ import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext, AppEntry } from '@/types';
 import { CMD, normalizeAppList, extractList } from '@/types';
 import { DevicePageHeader, EmptyState, ErrorAlert, GridItemCard, LoadingSkeleton } from '@/components/device/shared';
+import { DataActionsMenu, buildDataActions } from '@/components/device/DataActionsMenu';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Smartphone, Search } from 'lucide-react';
@@ -13,13 +14,15 @@ export default function AppsPage() {
   const [showSystem, setShowSystem] = useState(false);
   const [search, setSearch] = useState('');
 
-  const { data: apps, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<AppEntry[]>({
+  const { data: apps, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<AppEntry[]>({
     clientId,
     page: 'apps',
     extractData: (d) => normalizeAppList(extractList(d.list)),
     dataType: 'apps',
     defaultValue: [],
   });
+
+  const dataActions = buildDataActions({ data: apps, exportPrefix: 'apps', onClear: clearData });
 
   const fetchUserApps = useCallback(async () => {
     await sendCommand(CMD.APPS, { sys: false });
@@ -47,6 +50,7 @@ export default function AppsPage() {
           { label: 'User', icon: Smartphone, onClick: fetchUserApps, disabled: loading || !online },
           { label: 'All', onClick: fetchAllApps, disabled: loading || !online, variant: 'outline' },
         ]}
+        moreActions={<DataActionsMenu actions={dataActions} disabled={loading} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}

@@ -13,7 +13,7 @@ const themeOptions = [
 
 export default function Header({ onMobileMenuOpen }: { onMobileMenuOpen: () => void }) {
   const { theme, setTheme, resolvedTheme } = useThemeStore();
-  const { user, logout, hasPermission } = useAuthStore();
+  const { user, logout } = useAuthStore();
   const navigate = useNavigate();
   const [themeOpen, setThemeOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);

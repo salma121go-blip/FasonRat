@@ -1,35 +1,33 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './sidebar';
 import Header from './header';
 import MobileNav from './mobile-nav';
 import { useDevicesStore } from '@/store/devices';
 import { initAdminSocket, disconnectAdminSocket } from '@/services/socket';
-import type { Socket } from 'socket.io-client';
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
-  const { fetchDashboard } = useDevicesStore();
-  const socketRef = useRef<Socket | null>(null);
+  const fetchDashboard = useDevicesStore((s) => s.fetchDashboard);
 
   useEffect(() => {
     setMobileOpen(false);
   }, [location.pathname]);
 
-  const handleDeviceChange = useCallback(() => {
-    fetchDashboard();
-  }, [fetchDashboard]);
+  const fetchDashboardRef = useRef(fetchDashboard);
+  useEffect(() => {
+    fetchDashboardRef.current = fetchDashboard;
+  });
 
   useEffect(() => {
-    const s = initAdminSocket(handleDeviceChange);
-    socketRef.current = s;
-
-    return () => {
-      disconnectAdminSocket();
-      socketRef.current = null;
+    const handleDeviceChange = () => {
+      fetchDashboardRef.current();
     };
-  }, [handleDeviceChange]);
+    initAdminSocket(handleDeviceChange);
+    return () => disconnectAdminSocket();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="h-screen overflow-hidden flex">

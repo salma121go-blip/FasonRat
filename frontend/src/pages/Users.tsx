@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
-  Users as UsersIcon, Plus, Trash2, X, Check,
+  Users as UsersIcon, Plus, Trash2, Check,
   AlertCircle, ShieldCheck, Shield, RefreshCw, Lock, Search, Mail, Clock
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';

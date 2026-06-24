@@ -1,12 +1,13 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext } from '@/types';
 import { CMD } from '@/types';
 import { DevicePageHeader, ErrorAlert, StatusBadge, LoadingSkeleton } from '@/components/device/shared';
+import { DataActionsMenu } from '@/components/device/DataActionsMenu';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, EyeOff, Eye } from 'lucide-react';
+import { RefreshCw, EyeOff, Eye, FileJson, Trash2 } from 'lucide-react';
 
 export default function FasonPage() {
   const { clientId, loadClient, online } = useOutletContext<DeviceOutletContext>();
@@ -21,7 +22,7 @@ export default function FasonPage() {
     };
   }, []);
 
-  const { data: hidden, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<boolean>({
+  const { data: hidden, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<boolean>({
     clientId,
     page: 'fason',
     extractData: (d) => !!d.hidden,
@@ -44,6 +45,24 @@ export default function FasonPage() {
     timerRef.current = setTimeout(() => { refresh(); loadClient(); }, 2000);
   }, [sendCommand, refresh, loadClient]);
 
+  const fasonActions = [
+    {
+      label: 'Export JSON',
+      icon: FileJson,
+      onClick: () => {
+        import('@/lib/export').then(({ exportJSON, timestampedFilename }) => {
+          exportJSON({ hidden, timestamp: new Date().toISOString() }, timestampedFilename('fason-status'));
+        });
+      },
+    },
+    {
+      label: 'Clear Data',
+      icon: Trash2,
+      onClick: clearData,
+      variant: 'destructive' as const,
+    },
+  ];
+
   return (
     <div className="space-y-5">
       <DevicePageHeader
@@ -52,6 +71,7 @@ export default function FasonPage() {
         actions={[
           { label: 'Check Status', icon: RefreshCw, onClick: checkStatus, disabled: loading || !online, variant: 'outline' },
         ]}
+        moreActions={<DataActionsMenu actions={fasonActions} disabled={loading} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}

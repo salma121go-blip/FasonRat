@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { getDb, getSqliteDb } from '../db/index.js';
 import { logs } from '../db/schema.js';
-import { eq, desc, count, like, and } from 'drizzle-orm';
+import { eq, desc, count, and, sql } from 'drizzle-orm';
 import { requirePermission } from '../middleware/auth.js';
 
 function escapeLikeWildcards(str: string): string {
@@ -27,7 +27,11 @@ export async function logsRoutes(app: FastifyInstance) {
     const conditions = [];
     if (query.type) conditions.push(eq(logs.type, query.type));
     if (query.category) conditions.push(eq(logs.category, query.category));
-    if (query.search) conditions.push(like(logs.message, `%${escapeLikeWildcards(query.search)}%`));
+
+    if (query.search) {
+      const pattern = `%${escapeLikeWildcards(query.search)}%`;
+      conditions.push(sql`${logs.message} LIKE ${pattern} ESCAPE '\\'`);
+    }
 
     const result = d.select({
       id: logs.id,

@@ -39,9 +39,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Initialize database
-        run: npm run db:push
-
       - name: Build project
         run: npm run build
 

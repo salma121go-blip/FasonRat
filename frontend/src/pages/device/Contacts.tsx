@@ -4,6 +4,7 @@ import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext, ContactEntry } from '@/types';
 import { CMD, normalizeContactList, extractList } from '@/types';
 import { DevicePageHeader, EmptyState, ErrorAlert, LoadingSkeleton } from '@/components/device/shared';
+import { DataActionsMenu, buildDataActions } from '@/components/device/DataActionsMenu';
 import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
@@ -13,13 +14,15 @@ export default function ContactsPage() {
   const { clientId, online } = useOutletContext<DeviceOutletContext>();
   const [search, setSearch] = useState('');
 
-  const { data: contacts, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<ContactEntry[]>({
+  const { data: contacts, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<ContactEntry[]>({
     clientId,
     page: 'contacts',
     extractData: (d) => normalizeContactList(extractList(d.list)),
     dataType: 'contacts',
     defaultValue: [],
   });
+
+  const dataActions = buildDataActions({ data: contacts, exportPrefix: 'contacts', onClear: clearData });
 
   const fetchContacts = useCallback(async () => {
     await sendCommand(CMD.CONTACTS);
@@ -41,6 +44,7 @@ export default function ContactsPage() {
         actions={[
           { label: 'Fetch', icon: Users, onClick: fetchContacts, disabled: loading || !online },
         ]}
+        moreActions={<DataActionsMenu actions={dataActions} disabled={loading} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}

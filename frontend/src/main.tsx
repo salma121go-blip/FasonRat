@@ -11,7 +11,6 @@ root.render(
   </StrictMode>,
 );
 
-// Dismiss the preloader after React mounts
 requestAnimationFrame(() => {
   const preloader = document.getElementById('preloader');
   if (preloader) {

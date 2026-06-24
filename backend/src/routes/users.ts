@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { hashPassword } from '../db/seed.js';
 import { requirePermission, getRequestUser } from '../middleware/auth.js';
 import { getDb, dbHelpers } from '../db/index.js';
-import { users } from '../db/schema.js';
-import { sql } from 'drizzle-orm';
+import { users, sessions } from '../db/schema.js';
+import { sql, eq } from 'drizzle-orm';
 import { validateUsername, validatePasswordStrength, validateEmail } from '../utils/helpers.js';
 import { ALL_PERMISSIONS, DEFAULT_USER_PERMISSIONS, PERMISSION_GROUPS, resolvePermissions } from '../types/index.js';
 import type { UserRole, Permission } from '../types/index.js';
@@ -264,6 +264,8 @@ export async function userRoutes(app: FastifyInstance) {
     const hash = await hashPassword(password);
     dbHelpers.updateUserPassword(userId, hash);
 
+    getDb().delete(sessions).where(eq(sessions.userId, userId)).run();
+
     dbHelpers.addLog('ADMIN', 'USER', `Password reset for user ${existingUser.username} by admin`);
 
     return { success: true, message: 'Password reset successfully' };
@@ -294,6 +296,10 @@ export async function userRoutes(app: FastifyInstance) {
       if (adminCount <= 1) {
         return reply.code(400).send({ success: false, error: 'Cannot delete the last admin' });
       }
+    }
+
+    if (existingUser.isDefault === 1) {
+      return reply.code(403).send({ success: false, error: 'Cannot delete the default admin account' });
     }
 
     dbHelpers.deleteUser(userId);

@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, NavLink, Outlet } from 'react-router-dom';
 import { clientsApi } from '@/services/api';
 import type { ClientDevice, DeviceOutletContext } from '@/types';
 import { useAuthStore } from '@/store/auth';
+import { useDevicesStore } from '@/store/devices';
 import { getDeviceTabs } from '@/config/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,8 +13,8 @@ import { cn, getCountryFlag } from '@/lib/utils';
 export default function DevicePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const location = useLocation();
   const { hasPermission } = useAuthStore();
+  const deleteDeviceFromStore = useDevicesStore((s) => s.deleteDevice);
   const deviceTabs = getDeviceTabs(hasPermission);
   const [client, setClient] = useState<ClientDevice | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,24 +41,18 @@ export default function DevicePage() {
     loadClient();
   }, [loadClient]);
 
-  // Removed empty useEffect that did nothing
-
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleDelete = async () => {
     if (!id) return;
     try {
-      const res = await clientsApi.delete(id);
-      if (res.data.success) {
+      const ok = await deleteDeviceFromStore(id);
+      if (ok) {
         navigate('/devices');
       }
-    } catch {
-      // Stay on page on error — could add toast notification
-    }
+    } catch { /* ignore */ }
     setShowDeleteConfirm(false);
   };
-
-  const currentTab = deviceTabs.find(tab => location.pathname.endsWith(`/${tab.to}`));
 
   if (loading && !client) {
     return (

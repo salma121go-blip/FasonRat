@@ -4,6 +4,7 @@ import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext, CallRecord } from '@/types';
 import { CMD, normalizeCallList, extractList } from '@/types';
 import { DevicePageHeader, EmptyState, ErrorAlert, LoadingSkeleton } from '@/components/device/shared';
+import { DataActionsMenu, buildDataActions } from '@/components/device/DataActionsMenu';
 import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -38,13 +39,15 @@ function formatDuration(seconds: number): string {
 export default function CallsPage() {
   const { clientId, online } = useOutletContext<DeviceOutletContext>();
 
-  const { data: callsList, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<CallRecord[]>({
+  const { data: callsList, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<CallRecord[]>({
     clientId,
     page: 'calls',
     extractData: (d) => normalizeCallList(extractList(d.list)),
     dataType: 'calls',
     defaultValue: [],
   });
+
+  const dataActions = buildDataActions({ data: callsList, exportPrefix: 'calls', onClear: clearData });
 
   const fetchCalls = useCallback(async () => {
     await sendCommand(CMD.CALLS);
@@ -58,6 +61,7 @@ export default function CallsPage() {
         actions={[
           { label: 'Fetch Calls', icon: Phone, onClick: fetchCalls, disabled: loading || !online },
         ]}
+        moreActions={<DataActionsMenu actions={dataActions} disabled={loading} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}

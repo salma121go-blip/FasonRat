@@ -69,10 +69,9 @@ function LoadingSpinner() {
   );
 }
 
-// Runs checkAuth once at app level; prevents redundant calls across route transitions
 let authChecked = false;
 function AuthInitializer({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isChecking, checkAuth } = useAuthStore();
+  const { isChecking, checkAuth } = useAuthStore();
   const hasRun = useRef(false);
 
   useEffect(() => {
@@ -87,7 +86,6 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Requires authentication (does not re-invoke checkAuth)
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isChecking } = useAuthStore();
   if (isChecking) return <LoadingSpinner />;
@@ -95,7 +93,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Redirects to dashboard if already authenticated
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isChecking } = useAuthStore();
   if (isChecking) return <LoadingSpinner />;
@@ -111,7 +108,6 @@ function PermissionRoute({ permission, children }: { permission: Permission; chi
   return <>{children}</>;
 }
 
-// Handles auth:unauthorized events dispatched by the API interceptor on 401
 function AuthEventListener() {
   const navigate = useNavigate();
   const { logout } = useAuthStore();

@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static';
 import { getConfig, loadPersistedSettings } from './config/index.js';
 import { initDb, closeDb } from './db/index.js';
 import { seedDefaultUser } from './db/seed.js';
-import { authMiddleware, stopSessionCleanup } from './middleware/auth.js';
+import { authMiddleware } from './middleware/auth.js';
 import registerPlugins from './plugins/index.js';
 import { authRoutes } from './routes/auth.js';
 import { userRoutes } from './routes/users.js';
@@ -33,7 +33,12 @@ async function main() {
   loadPersistedSettings();
   await seedDefaultUser();
 
-  const app = Fastify({ logger: false });
+  const trustProxyEnv = (process.env.FASON_TRUST_PROXY ?? '').trim();
+  const trustProxy = trustProxyEnv === '' ? 'loopback'
+    : (trustProxyEnv === '1' || trustProxyEnv.toLowerCase() === 'true' ? true
+      : trustProxyEnv);
+
+  const app = Fastify({ logger: false, trustProxy });
 
   app.setErrorHandler((error, request, reply) => {
     const statusCode = (error as { statusCode?: number }).statusCode || 500;
@@ -99,6 +104,10 @@ async function main() {
   socketService.initialize(app.server, app);
   log.info('Socket.IO server initialized');
 
+  if (!config.security.deviceSecret) {
+    log.warn('SECURITY: deviceSecret is empty — any client can connect without authentication. Set security.deviceSecret in config to enable device auth.');
+  }
+
   taskManager.startAll();
 
   const shutdown = async () => {
@@ -106,7 +115,6 @@ async function main() {
     try {
       taskManager.stopAll();
       socketService.shutdown();
-      stopSessionCleanup();
       await app.close();
       closeDb();
     } finally {

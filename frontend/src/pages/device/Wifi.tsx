@@ -4,6 +4,7 @@ import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext, WifiNetwork } from '@/types';
 import { CMD, normalizeWifiList, extractList } from '@/types';
 import { DevicePageHeader, EmptyState, ErrorAlert, StatusBadge, LoadingSkeleton } from '@/components/device/shared';
+import { DataActionsMenu, buildDataActions } from '@/components/device/DataActionsMenu';
 import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -26,7 +27,7 @@ function getSignalColor(bars: number) {
 export default function WifiPage() {
   const { clientId, online } = useOutletContext<DeviceOutletContext>();
 
-  const { data: rawData, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<{
+  const { data: rawData, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<{
     networks: WifiNetwork[];
     wifiError: string | null;
   }>({
@@ -43,6 +44,8 @@ export default function WifiPage() {
   const networks = rawData.networks;
   const wifiError = rawData.wifiError;
 
+  const dataActions = buildDataActions({ data: networks, exportPrefix: 'wifi', onClear: clearData });
+
   const scanWifi = useCallback(async () => {
     await sendCommand(CMD.WIFI);
   }, [sendCommand]);
@@ -55,6 +58,7 @@ export default function WifiPage() {
         actions={[
           { label: 'Scan', icon: Wifi, onClick: scanWifi, disabled: loading || !online },
         ]}
+        moreActions={<DataActionsMenu actions={dataActions} disabled={loading} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}

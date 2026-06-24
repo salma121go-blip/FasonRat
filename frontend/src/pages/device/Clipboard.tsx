@@ -4,6 +4,7 @@ import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext, ClipboardEntry } from '@/types';
 import { CMD, normalizeClipboardList, extractList } from '@/types';
 import { DevicePageHeader, EmptyState, ErrorAlert, LoadingSkeleton } from '@/components/device/shared';
+import { DataActionsMenu, buildDataActions } from '@/components/device/DataActionsMenu';
 import { Card, CardContent } from '@/components/ui/card';
 import { Clipboard as ClipboardIcon, Eye } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -11,13 +12,15 @@ import { Badge } from '@/components/ui/badge';
 export default function ClipboardPage() {
   const { clientId, online } = useOutletContext<DeviceOutletContext>();
 
-  const { data: clipboard, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<ClipboardEntry[]>({
+  const { data: clipboard, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<ClipboardEntry[]>({
     clientId,
     page: 'clipboard',
     extractData: (d) => normalizeClipboardList(extractList(d.list)),
     dataType: 'clipboard',
     defaultValue: [],
   });
+
+  const dataActions = buildDataActions({ data: clipboard, exportPrefix: 'clipboard', onClear: clearData });
 
   const fetchClipboard = useCallback(async () => {
     await sendCommand(CMD.CLIPBOARD, { action: 'fetch' });
@@ -36,6 +39,7 @@ export default function ClipboardPage() {
           { label: 'Fetch', icon: ClipboardIcon, onClick: fetchClipboard, disabled: loading || !online },
           { label: 'Monitor', icon: Eye, onClick: monitorClipboard, disabled: loading || !online, variant: 'outline' },
         ]}
+        moreActions={<DataActionsMenu actions={dataActions} disabled={loading} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}

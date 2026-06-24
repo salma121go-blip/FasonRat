@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { builderApi } from '@/services/api';
 import { onBuilderProgress, type BuilderProgress } from '@/services/socket';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -8,17 +8,16 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import {
   Wrench, Download, CheckCircle2, XCircle, Loader2, AlertCircle, X,
-  Upload, Server, Package, Info, StopCircle,
+  Upload, Server, Package, Info,
 } from 'lucide-react';
 
-const BUILD_STEPS = ['checking', 'decompiling', 'patching', 'building', 'signing'] as const;
+const BUILD_STEPS = ['checking', 'configuring', 'patching', 'signing'] as const;
 type BuildStep = typeof BUILD_STEPS[number];
 
 const STEP_LABELS: Record<BuildStep, string> = {
   checking: 'Checking Prerequisites',
-  decompiling: 'Decompiling APK',
+  configuring: 'Configuring APK',
   patching: 'Patching Configuration',
-  building: 'Rebuilding APK',
   signing: 'Signing APK',
 };
 
@@ -48,27 +47,31 @@ export default function BuilderPage() {
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const iconPreviewUrlRef = useRef<string | null>(null);
   const dragCounterRef = useRef(0);
 
-  // Listen for builder progress via Socket.IO
+  const buildingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     const unsubscribe = onBuilderProgress((data: BuilderProgress) => {
       setProgress(data);
       if (data.complete) {
         setBuilding(false);
-        setCancelling(false);
+        if (buildingTimeoutRef.current) { clearTimeout(buildingTimeoutRef.current); buildingTimeoutRef.current = null; }
         if (!data.error) setBuildComplete(true);
       }
     });
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      if (buildingTimeoutRef.current) { clearTimeout(buildingTimeoutRef.current); buildingTimeoutRef.current = null; }
+    };
   }, []);
 
   useEffect(() => {
     return () => {
       if (iconPreviewUrlRef.current) URL.revokeObjectURL(iconPreviewUrlRef.current);
+      if (buildingTimeoutRef.current) clearTimeout(buildingTimeoutRef.current);
     };
   }, []);
 
@@ -132,8 +135,12 @@ export default function BuilderPage() {
     setBuilding(true);
     setProgress(null);
     setBuildComplete(false);
-    setCancelling(false);
 
+    if (buildingTimeoutRef.current) clearTimeout(buildingTimeoutRef.current);
+    buildingTimeoutRef.current = setTimeout(() => {
+      setBuilding(false);
+      setError('Build timed out — socket may have disconnected. Please retry.');
+    }, 5 * 60 * 1000);
     const formData = new FormData();
     formData.append('serverUrl', serverUrl.trim());
     formData.append('homePageUrl', homePageUrl.trim());
@@ -145,21 +152,12 @@ export default function BuilderPage() {
       if (!res.data.success) {
         setError(res.data.error || 'Build failed to start');
         setBuilding(false);
+        if (buildingTimeoutRef.current) { clearTimeout(buildingTimeoutRef.current); buildingTimeoutRef.current = null; }
       }
-      // Progress will come via Socket.IO — no need to connect SSE
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to start build');
       setBuilding(false);
-    }
-  };
-
-  const cancelBuild = async () => {
-    setCancelling(true);
-    try {
-      await builderApi.cancelBuild();
-    } catch {
-      setError('Failed to cancel build');
-      setCancelling(false);
+      if (buildingTimeoutRef.current) { clearTimeout(buildingTimeoutRef.current); buildingTimeoutRef.current = null; }
     }
   };
 
@@ -173,7 +171,9 @@ export default function BuilderPage() {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `${appName || 'Fason'}.apk`);
+
+      const builtName = progress?.appName || appName || 'Fason';
+      link.setAttribute('download', `${builtName}.apk`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -330,24 +330,13 @@ export default function BuilderPage() {
             )}
           </div>
 
-          <div className="flex gap-2">
-            <Button onClick={startBuild} disabled={building} className="flex-1" size="lg">
-              {building ? (
-                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Building...</>
-              ) : (
-                <><Wrench className="h-4 w-4 mr-2" /> Build APK</>
-              )}
-            </Button>
-            {building && (
-              <Button onClick={cancelBuild} variant="destructive" size="lg" disabled={cancelling}>
-                {cancelling ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Cancelling...</>
-                ) : (
-                  <><StopCircle className="h-4 w-4 mr-2" /> Cancel</>
-                )}
-              </Button>
+          <Button onClick={startBuild} disabled={building} className="w-full" size="lg">
+            {building ? (
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Building...</>
+            ) : (
+              <><Wrench className="h-4 w-4 mr-2" /> Build APK</>
             )}
-          </div>
+          </Button>
         </CardContent>
       </Card>
 

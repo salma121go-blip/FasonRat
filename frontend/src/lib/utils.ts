@@ -14,7 +14,6 @@ export function formatBytes(bytes: unknown): string {
   return parseFloat((num / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-/** Coerce any value to a finite number, returning fallback if not possible. */
 export function safeNum(val: unknown, fallback: number = 0): number {
   if (typeof val === 'number') return Number.isFinite(val) ? val : fallback;
   const n = Number(val);

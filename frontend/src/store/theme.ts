@@ -40,7 +40,6 @@ export const useThemeStore = create<ThemeState>()(
   ),
 );
 
-// Listen for OS-level theme changes when using "system" mode
 if (typeof window !== "undefined") {
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     const store = useThemeStore.getState();

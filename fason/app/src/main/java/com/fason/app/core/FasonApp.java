@@ -3,24 +3,25 @@ package com.fason.app.core;
 import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
-
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
-
+import com.fason.app.core.config.Config;
 import com.fason.app.service.MainService;
 import com.fason.app.worker.KeepAliveWorker;
-
 import java.util.concurrent.TimeUnit;
 
 public class FasonApp extends Application {
-
     private static FasonApp instance;
-
     @Override
     public void onCreate() {
         super.onCreate();
         instance = this;
+        try {
+            Config.init();
+        } catch (Throwable t) {
+            return;
+        }
         startServices();
     }
 
@@ -28,7 +29,6 @@ public class FasonApp extends Application {
         try {
             startForegroundService(new Intent(this, MainService.class));
         } catch (Exception ignored) {}
-
         try {
             PeriodicWorkRequest work = new PeriodicWorkRequest.Builder(
                 KeepAliveWorker.class, 15, TimeUnit.MINUTES

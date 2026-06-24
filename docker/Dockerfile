@@ -6,7 +6,7 @@ FROM node:22-slim AS frontend-build
 
 WORKDIR /app/frontend
 COPY frontend/package.json ./
-RUN npm install --no-audit --no-fund
+RUN npm install --no-audit --no-fund --no-package-lock
 COPY frontend/ ./
 RUN npm run build
 
@@ -15,7 +15,7 @@ FROM node:22-slim AS backend-build
 
 WORKDIR /app/backend
 COPY backend/package.json ./
-RUN npm install --no-audit --no-fund
+RUN npm install --no-audit --no-fund --no-package-lock
 COPY backend/tsconfig.json ./
 COPY backend/src ./src
 RUN npm run build
@@ -25,7 +25,7 @@ FROM node:22-slim AS backend-deps
 
 WORKDIR /app/backend
 COPY backend/package.json ./
-RUN npm install --omit=dev --no-audit --no-fund \
+RUN npm install --omit=dev --no-audit --no-fund --no-package-lock \
     && npm cache clean --force
 
 # Stage 4: Final image

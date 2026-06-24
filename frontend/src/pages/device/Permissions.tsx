@@ -4,13 +4,14 @@ import { useDeviceData } from '@/hooks/useDeviceData';
 import type { DeviceOutletContext, PermissionEntry } from '@/types';
 import { CMD, normalizePermissionList, extractList } from '@/types';
 import { DevicePageHeader, EmptyState, ErrorAlert, GridItemCard, StatusBadge, LoadingSkeleton } from '@/components/device/shared';
+import { DataActionsMenu, buildDataActions } from '@/components/device/DataActionsMenu';
 import { Button } from '@/components/ui/button';
 import { Shield, ShieldCheck, ShieldX, Search } from 'lucide-react';
 
 export default function PermissionsPage() {
   const { clientId, online } = useOutletContext<DeviceOutletContext>();
 
-  const { data: permissions, loading, error, refresh, sendCommand, commandStatus } = useDeviceData<PermissionEntry[]>({
+  const { data: permissions, loading, error, refresh, sendCommand, commandStatus, clearData } = useDeviceData<PermissionEntry[]>({
     clientId,
     page: 'permissions',
     extractData: (d) => normalizePermissionList(extractList(d.list)),
@@ -23,12 +24,14 @@ export default function PermissionsPage() {
   }, [sendCommand]);
 
   const checkPermission = useCallback(async (permissionName: string) => {
-    await sendCommand(CMD.PERM_CHECK, { permission: permissionName });
+    await sendCommand(CMD.PERM_CHECK, { perm: permissionName });
   }, [sendCommand]);
 
   const grantedCount = permissions.filter((p) => p.allowed).length;
   const deniedCount = permissions.length - grantedCount;
   const busy = commandStatus === 'sending';
+
+  const dataActions = buildDataActions({ data: permissions, exportPrefix: 'permissions', onClear: clearData });
 
   return (
     <div className="space-y-5">
@@ -38,6 +41,7 @@ export default function PermissionsPage() {
         actions={[
           { label: 'Fetch', icon: Shield, onClick: fetchPermissions, disabled: loading || !online },
         ]}
+        moreActions={<DataActionsMenu actions={dataActions} disabled={loading} />}
         refresh={refresh}
         loading={loading}
         commandStatus={commandStatus}
